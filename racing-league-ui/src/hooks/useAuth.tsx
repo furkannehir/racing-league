@@ -36,6 +36,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       setLoading(true);
       setError(null);
+      if (import.meta.env.VITE_DEBUG === 'true') {
+        console.log('API URL:', import.meta.env.VITE_API_URL);
+      }
       
       const response = await api.post('/login', {
         email,
