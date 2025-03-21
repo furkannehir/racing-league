@@ -12,6 +12,7 @@ class Config:
     FIREBASE_URL = os.getenv('FIREBASE_URL')
     MONGO_URI = os.getenv('MONGO_URI')
     ENV = os.getenv('ENV')
+    ORIGINS = os.getenv('ORIGINS').split(',')
 
     @staticmethod
     def init_firebase():
