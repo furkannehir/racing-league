@@ -1,9 +1,10 @@
 import axios, { AxiosResponse, AxiosError } from 'axios';
 import { League, LeagueInvite } from '../types/league';
+import config from '../config/config';
 
 // Create an axios instance with appropriate configuration
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: config.api.baseUrl,
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
