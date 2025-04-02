@@ -1,5 +1,5 @@
 {
     "api": {
-        "baseUrl": "https://racing-league.onrender.com"
+        "baseUrl": "https://racing-league.onrender.com/api"
     }
 }
