@@ -14,6 +14,8 @@ import MyLeagues from './pages/my-leagues';
 import LeagueDetails from './pages/league-details';
 import Dashboard from './pages/dashboard';
 import CreateLeague from './pages/create-league';
+import ProfilePage from './pages/profile';
+import FindLeaguesPage from './pages/filnd-leagues';
 // Import other pages...
 
 // Protected route wrapper
@@ -60,6 +62,17 @@ const App: React.FC = () => {
                 <CreateLeague />
               </ProtectedRoute>
             } />
+            <Route path="/profile" element={
+              <ProtectedRoute>
+                <ProfilePage />
+              </ProtectedRoute>
+            } />
+            <Route path="/search-leagues" element={
+              <ProtectedRoute>
+                <FindLeaguesPage />
+              </ProtectedRoute>
+            } />
+
             {/* Add other protected routes */}
             
             {/* Fallback route */}

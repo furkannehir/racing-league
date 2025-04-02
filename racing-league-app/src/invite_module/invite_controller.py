@@ -4,9 +4,9 @@ from src.invite_module.invite_service import InviteService
 from src.auth_module.auth_service import AuthService
 from firebase_admin import auth
 
-invite_blueprint = Blueprint('invite', __name__)
+invite_blueprint = Blueprint('invite', __name__, url_prefix='/api/v1/invites')
 
-@invite_blueprint.route('/invites/my', methods=['GET'])
+@invite_blueprint.route('/my', methods=['GET'])
 @login_required
 def get_my_invites():
     uid = AuthService.get_current_user()
@@ -14,7 +14,7 @@ def get_my_invites():
     invites = InviteService.get_invites_by_user(user.email)
     return jsonify([invite.serialize() for invite in invites]), 200
 
-@invite_blueprint.route('/invites/sent', methods=['GET'])
+@invite_blueprint.route('/sent', methods=['GET'])
 @login_required
 def get_sent_invites():
     uid = AuthService.get_current_user()
@@ -23,7 +23,7 @@ def get_sent_invites():
     return jsonify([invite.serialize() for invite in invites])
 
 
-@invite_blueprint.route('/invites', methods=['POST'])
+@invite_blueprint.route('', methods=['POST'])
 @login_required
 def create_invite():
     try:
@@ -43,20 +43,20 @@ def create_invite():
                 "details": "Invite already sent to user!"
             }), 409
 
-@invite_blueprint.route('/invites/<invite_id>/accept', methods=['POST'])
+@invite_blueprint.route('/<invite_id>/accept', methods=['POST'])
 @login_required
 def accept_invite(invite_id):
     invite = InviteService.accept_invite(invite_id)
     return jsonify(invite.serialize()), 200
 
-@invite_blueprint.route('/invites/<invite_id>/decline', methods=['POST'])
+@invite_blueprint.route('/<invite_id>/decline', methods=['POST'])
 @login_required
 def decline_invite(invite_id):
     invite = InviteService.decline_invite(invite_id)
     return jsonify(invite.serialize()), 200
 
 
-@invite_blueprint.route('/invites/<invite_id>', methods=['DELETE'])
+@invite_blueprint.route('/<invite_id>', methods=['DELETE'])
 @login_required
 def delete_invite(invite_id):
     InviteService.delete_invite(invite_id)

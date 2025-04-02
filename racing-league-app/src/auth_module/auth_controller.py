@@ -1,10 +1,10 @@
 # project/src/auth_module/auth_controller.py
 from flask import Blueprint, request, jsonify
 from src.auth_module.auth_service import AuthService, login_required
-from firebase_admin import auth
 from src.user_module.user import User
 
-auth_blueprint = Blueprint('auth', __name__)
+# Set the URL prefix for all routes in this blueprint
+auth_blueprint = Blueprint('auth', __name__, url_prefix='/api/v1/auth')
 
 @auth_blueprint.route('/login', methods=['POST'])
 def login():
@@ -69,16 +69,4 @@ def verify():
 def logout():
     return jsonify({"message": "Logged out successfully!"}), 200
 
-@auth_blueprint.route('/dashboard')
-@login_required
-def dashboard():
-    return jsonify({"message": f"Welcome {AuthService.get_current_user()}!"}), 200
 
-@auth_blueprint.route('/user')
-@login_required
-def user_info():
-    current_user = auth.get_user(AuthService.get_current_user())
-    user = User.get_user_by_mail(current_user.email)
-    if (user is None):
-        return jsonify({"message": "User not found"}), 404
-    return jsonify(user.serialize()), 200

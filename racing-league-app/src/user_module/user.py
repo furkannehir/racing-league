@@ -40,6 +40,23 @@ class User:
                 deleted_at=user_data['deleted_at']
             )
         return None
+    
+    @staticmethod
+    def get_user_by_id(user_id):
+        user_data = db.users.find_one({"_id": ObjectId(user_id)})
+        if user_data:
+            return User(
+                _id=user_data['_id'],
+                name=user_data['name'],
+                email=user_data['email'],
+                eaUsername=user_data['eaUsername'],
+                leagues=user_data['leagues'],
+                races=user_data['races'],
+                created_at=user_data['created_at'],
+                updated_at=user_data['updated_at'],
+                deleted_at=user_data['deleted_at']
+            )
+        return None
 
     def save(self):
         user = {

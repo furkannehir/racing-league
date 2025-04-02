@@ -88,6 +88,13 @@ class LeagueService:
         return leagues
     
     @staticmethod
+    def get_leagues_by_participant(email):
+        return League.get_leagues_by_participant(email)
+    
+    def get_leagues_by_owner(email):
+        return League.get_leagues_by_owner(email)
+
+    @staticmethod
     def get_league_by_id(league_id):
         return League.get_league_by_id(league_id)
 

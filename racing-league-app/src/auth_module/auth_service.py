@@ -20,7 +20,7 @@ def login_required(f):
             request.uid = decoded_token['user_id']
             return f(*args, **kwargs)
         except Exception as e:
-            if str(e).startswith('Invalid token'):
+            if str(e).lower().__contains__('token'):
                 return jsonify({"message": "Invalid token"}), 401
             else:
                 return jsonify({"message": str(e)}), 500
@@ -91,5 +91,37 @@ class AuthService:
                 password=password
             )
             return user
+        except Exception as e:
+            return str(e)
+        
+    @staticmethod
+    def get_user_by_id(user_id):
+        try:
+            user = auth.get_user(user_id)
+            return user
+        except Exception as e:
+            return str(e)
+        
+    @staticmethod
+    def delete_user(user_id):
+        try:
+            auth.delete_user(user_id)
+            return True
+        except Exception as e:
+            return str(e)
+        
+    @staticmethod
+    def update_user(user_id, **kwargs):
+        try:
+            user = auth.update_user(user_id, **kwargs)
+            return user
+        except Exception as e:
+            return str(e)
+        
+    @staticmethod
+    def update_user_password(user_id, password):
+        try:
+            auth.update_user(user_id, password=password)
+            return True
         except Exception as e:
             return str(e)

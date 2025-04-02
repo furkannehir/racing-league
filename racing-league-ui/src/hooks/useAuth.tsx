@@ -37,7 +37,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setLoading(true);
       setError(null);
       
-      const response = await api.post('/login', {
+      const response = await api.post('/v1/auth/login', {
         email,
         password
       });

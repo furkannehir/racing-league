@@ -5,15 +5,15 @@ from src.league_module.league_service import LeagueService
 from src.auth_module.auth_service import AuthService
 from firebase_admin import auth
 
-league_blueprint = Blueprint('league', __name__)
+league_blueprint = Blueprint('league', __name__, url_prefix='/api/v1/leagues')
 
-@league_blueprint.route('/leagues/all', methods=['GET'])
+@league_blueprint.route('/all', methods=['GET'])
 @login_required
 def get_all_leagues():
     leagues = League.get_all_leagues()
     return jsonify([league.serialize() for league in leagues]), 200
 
-@league_blueprint.route('/leagues/<int:page>/<int:page_size>', methods=['GET'])
+@league_blueprint.route('/<int:page>/<int:page_size>', methods=['GET'])
 @login_required
 def get_all_leagues_page(page, page_size):
     leagues = League.get_all_leagues_pagination(page, page_size)
@@ -24,13 +24,13 @@ def get_all_leagues_page(page, page_size):
         }), 200
 
 
-@league_blueprint.route('/leagues/my', methods=['GET'])
+@league_blueprint.route('/my', methods=['GET'])
 @login_required
 def get_my_leagues():
     leagues = LeagueService.get_my_leagues()
     return jsonify([league.serialize() for league in leagues]), 200
 
-@league_blueprint.route('/leagues', methods=['POST'])
+@league_blueprint.route('', methods=['POST'])
 @login_required
 def create_league():
     data = request.json
@@ -45,13 +45,13 @@ def create_league():
     league = LeagueService.create_league(data)
     return jsonify(league.serialize()), 201 
 
-@league_blueprint.route('/leagues/<league_id>', methods=['GET'])
+@league_blueprint.route('/<league_id>', methods=['GET'])
 @login_required
 def get_league(league_id):
     league = League.get_league_by_id(league_id)
     return jsonify(league.serialize()), 200
 
-@league_blueprint.route('/leagues/<league_id>', methods=['PUT'])
+@league_blueprint.route('/<league_id>', methods=['PUT'])
 @login_required
 def update_league(league_id):
     data = request.json
@@ -63,7 +63,7 @@ def update_league(league_id):
     league = LeagueService.update_league(league_id, data)
     return jsonify(league.serialize()), 200
 
-@league_blueprint.route('/leagues/<league_id>', methods=['DELETE'])
+@league_blueprint.route('/<league_id>', methods=['DELETE'])
 @login_required
 def delete_league(league_id):
     uid = AuthService.get_current_user()
@@ -74,12 +74,12 @@ def delete_league(league_id):
     League.delete_league(league_id)
     return jsonify({"message": "League deleted successfully!"}), 200
 
-@league_blueprint.route('/leagues/public', methods=['GET'])
+@league_blueprint.route('/public', methods=['GET'])
 def get_public_leagues():
     leagues = League.get_public_leagues()
     return jsonify([league.serialize() for league in leagues]), 200
 
-@league_blueprint.route('/leagues/<league_id>/join', methods=['POST'])
+@league_blueprint.route('/<league_id>/join', methods=['POST'])
 @login_required
 def join_league(league_id):
     uid = AuthService.get_current_user()
@@ -90,8 +90,16 @@ def join_league(league_id):
         return jsonify({"message": "You have joined the league!"}), 200
     return jsonify({"message": "This league is private"}), 403
 
+@league_blueprint.route('/<league_id>/leave', methods=['POST'])
+@login_required
+def leave_league(league_id):
+    uid = AuthService.get_current_user()
+    user = auth.get_user(uid)
+    league = League.get_league_by_id(league_id)
+    league.remove_participant(user.email)
+    return jsonify({"message": "You have left the league!"}), 200
 
-@league_blueprint.route('/leagues/<league_id>/races/<race_id>/results', methods=['POST'])
+@league_blueprint.route('/<league_id>/races/<race_id>/results', methods=['POST'])
 @login_required
 def submit_race_results(league_id, race_id):
     """Submit results for a race"""

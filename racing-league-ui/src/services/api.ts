@@ -158,7 +158,7 @@ export const isAuthenticated = (): boolean => {
  */
 export const fetchMyLeagues = async (): Promise<League[]> => {
   try {
-    const response = await api.get('/leagues/my');
+    const response = await api.get('/v1/leagues/my');
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
@@ -179,7 +179,7 @@ export const fetchMyLeagues = async (): Promise<League[]> => {
  */
 export const fetchLeagueById = async (leagueId: string): Promise<League> => {
   try {
-    const response = await api.get<League>(`/leagues/${leagueId}`);
+    const response = await api.get<League>(`/v1/leagues/${leagueId}`);
     return response.data;
   } catch (error) {
     console.error(`Error fetching league ${leagueId}:`, error);
@@ -192,7 +192,7 @@ export const fetchLeagueById = async (leagueId: string): Promise<League> => {
  */
 export const joinLeague = async (leagueId: string): Promise<void> => {
   try {
-    await api.post(`/leagues/${leagueId}/join`);
+    await api.post(`/v1/leagues/${leagueId}/join`);
   } catch (error) {
     console.error(`Error joining league ${leagueId}:`, error);
     throw error;
@@ -204,7 +204,7 @@ export const joinLeague = async (leagueId: string): Promise<void> => {
  */
 export const leaveLeague = async (leagueId: string): Promise<void> => {
   try {
-    await api.post(`/leagues/${leagueId}/leave`);
+    await api.post(`/v1/leagues/${leagueId}/leave`);
   } catch (error) {
     console.error(`Error leaving league ${leagueId}:`, error);
     throw error;
@@ -216,7 +216,7 @@ export const leaveLeague = async (leagueId: string): Promise<void> => {
  */
 export const checkAuth = async (): Promise<boolean> => {
   try {
-    await api.get('/verify');
+    await api.get('/v1/auth/verify');
     return true;
   } catch (error) {
     console.error('Auth check failed:', error);
@@ -226,7 +226,7 @@ export const checkAuth = async (): Promise<boolean> => {
 
 export const fetchMyInvites = async (): Promise<LeagueInvite[]> => {
   try {
-    const response = await api.get('/invites/my');
+    const response = await api.get('/v1/invites/my');
     return response.data;
   } catch (error) {
     console.error('Error fetching invites:', error);
@@ -239,7 +239,7 @@ export const fetchMyInvites = async (): Promise<LeagueInvite[]> => {
  */
 export const acceptLeagueInvite = async (inviteId: string): Promise<void> => {
   try {
-    await api.post(`/invites/${inviteId}/accept`);
+    await api.post(`/v1/invites/${inviteId}/accept`);
   } catch (error) {
     console.error('Error accepting invite:', error);
     throw error;
@@ -251,7 +251,7 @@ export const acceptLeagueInvite = async (inviteId: string): Promise<void> => {
  */
 export const declineLeagueInvite = async (inviteId: string): Promise<void> => {
   try {
-    await api.post(`/invites/${inviteId}/decline`);
+    await api.post(`/v1/invites/${inviteId}/decline`);
   } catch (error) {
     console.error('Error declining invite:', error);
     throw error;
@@ -280,7 +280,7 @@ export const createLeague = async (leagueData: {
   admins: string[];
 }): Promise<League> => {
   try {
-    const response = await api.post<League>('/leagues', leagueData);
+    const response = await api.post<League>('/v1/leagues', leagueData);
     return response.data;
   } catch (error) {
     console.error('Error creating league:', error);
@@ -298,12 +298,74 @@ export const submitRaceResult = async (
 ): Promise<League> => {
   try {
     const response = await api.post<League>(
-      `/leagues/${leagueId}/races/${encodeURIComponent(trackName)}/results`, 
+      `/v1/leagues/${leagueId}/races/${encodeURIComponent(trackName)}/results`, 
       results 
     );
     return response.data;
   } catch (error) {
     console.error('Error submitting race results:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetch current user's profile data
+ */
+export const fetchUserProfile = async () => {
+  try {
+    const response = await api.get('/v1/users/profile');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update user profile information
+ */
+export const updateUserProfile = async (userData: {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  username?: string;
+  bio?: string;
+  preferences?: Record<string, any>;
+}) => {
+  try {
+    const response = await api.put('/v1/users/update', userData);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating user profile:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update user password
+ */
+export const updateUserPassword = async (passwordData: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}) => {
+  try {
+    const response = await api.put('/v1/users/update/password', passwordData);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating password:', error);
+    throw error;
+  }
+};
+/**
+ * Fetch public leagues
+ */
+export const fetchPublicLeagues = async (): Promise<League[]> => {
+  try {
+    const response = await api.get('/v1/leagues/all');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching public leagues:', error);
     throw error;
   }
 };
