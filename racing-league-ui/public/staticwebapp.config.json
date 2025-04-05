@@ -1,0 +1,17 @@
+{
+    "navigationFallback": {
+      "rewrite": "index.html",
+      "exclude": ["/static/*", "/images/*", "/*.css", "/*.js"]
+    },
+    "platform": {
+      "apiRuntimeVersion": "~4"
+    },
+    "responseOverrides": {
+      "401": {
+        "rewrite": "/index.html"
+      },
+      "403": {
+        "rewrite": "/index.html"
+      }
+    }
+}
