@@ -22,8 +22,11 @@ FROM nginx:alpine
 # Copy from the build stage using the correct path - adjust based on framework
 # Common build directories: dist (Vite), build (CRA), out (Next.js static)
 COPY --from=build /app/dist /usr/share/nginx/html
-# If dist doesn't work, try:
+# If using Create React App (CRA), use this instead:
 # COPY --from=build /app/build /usr/share/nginx/html
+
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
