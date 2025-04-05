@@ -11,7 +11,7 @@ RUN npm ci
 COPY . .
 
 # Build the application
-RUN npm run build && cp nginx.conf build/
+RUN npm run build
 
 # Debug - list directories to see where build output is located
 RUN ls -la
