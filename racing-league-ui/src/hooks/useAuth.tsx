@@ -146,7 +146,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const logout = async (): Promise<void> => {
     try {
       // Call logout API if available
-      await api.post('/auth/logout').catch(() => {
+      await api.get('/v1/auth/logout').catch(() => {
         // Ignore errors from logout endpoint
       });
     } finally {

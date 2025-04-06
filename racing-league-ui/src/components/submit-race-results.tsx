@@ -6,16 +6,6 @@ import {
   DialogActions,
   Button,
   Typography,
-  TableContainer,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  Paper,
-  FormControl,
-  Select,
-  MenuItem,
   FormControlLabel,
   Switch,
   CircularProgress,
@@ -23,14 +13,37 @@ import {
   Box,
   Chip,
   Tooltip,
-  IconButton
+  IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  Card,
+  Avatar,
 } from '@mui/material';
 import {
   Info as InfoIcon,
   EmojiEvents as TrophyIcon,
   Speed as SpeedIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  DragIndicator as DragIcon
 } from '@mui/icons-material';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { submitRaceResult } from '../services/api';
 import { League, RaceDetails } from '../types/league';
 
@@ -46,7 +59,153 @@ interface DriverResult {
   position: number;
   fastestLap: boolean;
   dnf: boolean;
+  driverId: string;
+  name: string;
 }
+
+// Sortable driver item component
+const SortableDriverItem = ({ 
+  driver, 
+  totalPoints,
+  onDNFChange, 
+  onFastestLapChange 
+}: {
+  driver: DriverResult;
+  totalPoints: number;
+  onDNFChange: (driverId: string, isDNF: boolean) => void;
+  onFastestLapChange: (driverId: string) => void;
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: driver.driverId, disabled: driver.dnf });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+    zIndex: isDragging ? 1000 : 1,
+  };
+
+  return (
+    <ListItem
+      ref={setNodeRef}
+      style={style}
+      disablePadding
+      sx={{ 
+        display: 'block',
+        mb: 1,
+        mx: 1,
+        bgcolor: isDragging 
+          ? 'rgba(30, 144, 255, 0.1)' 
+          : driver.fastestLap 
+            ? 'rgba(156, 39, 176, 0.1)' 
+            : 'transparent',
+      }}
+    >
+      <Card
+        sx={{ 
+          p: 2,
+          opacity: driver.dnf ? 0.6 : 1,
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderLeft: driver.position <= 3 
+            ? `4px solid ${
+                driver.position === 1 
+                  ? 'gold' 
+                  : driver.position === 2 
+                    ? 'silver' 
+                    : '#cd7f32'
+              }` 
+            : undefined,
+          '&:hover': {
+            bgcolor: !driver.dnf ? 'rgba(30, 144, 255, 0.05)' : undefined,
+            border: '1px solid rgba(255,255,255,0.2)',
+          }
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+          <Box 
+            {...attributes}
+            {...listeners}
+            sx={{ 
+              mr: 2, 
+              display: 'flex', 
+              alignItems: 'center',
+              color: 'text.secondary',
+              cursor: driver.dnf ? 'not-allowed' : 'grab',
+            }}
+          >
+            <DragIcon />
+          </Box>
+          
+          <Avatar 
+            sx={{ 
+              bgcolor: 'primary.main', 
+              color: 'white',
+              width: 36,
+              height: 36,
+              mr: 2,
+              fontWeight: 'bold'
+            }}
+          >
+            {driver.position}
+          </Avatar>
+          
+          <ListItemText 
+            primary={driver.name}
+            primaryTypographyProps={{
+              fontWeight: 500,
+              sx: {
+                textDecoration: driver.dnf ? 'line-through' : 'none'
+              }
+            }}
+            secondary={`Points: ${totalPoints}`}
+          />
+          
+          <Box sx={{ display: 'flex', alignItems: 'center', ml: 2 }}>
+            {driver.fastestLap && (
+              <Tooltip title="Fastest Lap">
+                <SpeedIcon 
+                  color="secondary" 
+                  sx={{ mr: 2 }}
+                />
+              </Tooltip>
+            )}
+            
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={driver.fastestLap}
+                  onChange={() => onFastestLapChange(driver.driverId)}
+                  size="small"
+                  color="secondary"
+                  disabled={driver.dnf}
+                />
+              }
+              label="Fastest Lap"
+              sx={{ mr: 2 }}
+            />
+            
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={driver.dnf}
+                  onChange={(e) => onDNFChange(driver.driverId, e.target.checked)}
+                  size="small"
+                />
+              }
+              label="DNF"
+            />
+          </Box>
+        </Box>
+      </Card>
+    </ListItem>
+  );
+};
 
 const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   open,
@@ -55,99 +214,108 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   selectedRace,
   onResultsSubmitted
 }) => {
-  const [raceResults, setRaceResults] = useState<Record<string, DriverResult>>({});
+  const [driverResults, setDriverResults] = useState<DriverResult[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [duplicatePositionWarning, setDuplicatePositionWarning] = useState(false);
+  
+  // Set up sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px movement required before activating drag
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
   
   const standings = league.standings?.overall || {};
   const pointSystem = league.pointSystem as Record<string, number> || {};
 
-  // Initialize race results when dialog opens with a new race
   useEffect(() => {
     if (open && selectedRace && league.participants) {
-      const initialResults: Record<string, DriverResult> = {};
-      league.participants.forEach((driver: any, index) => {
-        // Using driver.email as the key
-        const driverEmail = driver.email;
-        initialResults[driverEmail] = { 
-          position: index + 1, 
-          fastestLap: false,
-          dnf: false
-        };
-      });
-      setRaceResults(initialResults);
-      setDuplicatePositionWarning(false);
+      // Initialize driver results when dialog opens
+      const initialResults: DriverResult[] = Array.isArray(league.participants) 
+        ? league.participants.map((driver: any, index) => {
+            const driverId = typeof driver === 'string' ? driver : driver.email || driver._id;
+            const name = standings[driverId]?.name || 
+                        (typeof driver === 'string' ? driver : driver.name || driver.email || driverId);
+            return { 
+              position: index + 1,
+              fastestLap: false,
+              dnf: false,
+              driverId,
+              name
+            };
+          })
+        : [];
+      
+      setDriverResults(initialResults);
     }
-  }, [open, selectedRace, league.participants]);
+  }, [open, selectedRace, league.participants, standings]);
 
-  // Check for duplicate positions
-  useEffect(() => {
-    const positions = Object.values(raceResults)
-      .filter(r => !r.dnf)
-      .map(r => r.position);
-    
-    const hasDuplicates = positions.length !== new Set(positions).size;
-    setDuplicatePositionWarning(hasDuplicates);
-  }, [raceResults]);
-
-  const handlePositionChange = (driverEmail: string, position: number) => {
-    setRaceResults(prev => ({
-      ...prev,
-      [driverEmail]: { 
-        ...prev[driverEmail], 
-        position,
-        dnf: false // Reset DNF status when position is changed
-      }
-    }));
+  const handleDNFChange = (driverId: string, isDNF: boolean) => {
+    setDriverResults(prev => 
+      prev.map(driver => {
+        if (driver.driverId === driverId) {
+          return { 
+            ...driver, 
+            dnf: isDNF,
+            // If DNF, reset fastest lap to false
+            fastestLap: isDNF ? false : driver.fastestLap
+          };
+        }
+        return driver;
+      })
+    );
   };
 
-  const handleDNFChange = (driverEmail: string, isDNF: boolean) => {
-    setRaceResults(prev => ({
-      ...prev,
-      [driverEmail]: { 
-        ...prev[driverEmail],
-        dnf: isDNF,
-        // If DNF, reset fastest lap to false
-        fastestLap: isDNF ? false : prev[driverEmail].fastestLap
-      }
-    }));
-  };
-
-  const handleFastestLapChange = (driverEmail: string) => {
-    // Update all drivers to not have fastest lap first
-    const updatedResults = { ...raceResults };
-    Object.keys(updatedResults).forEach(email => {
-      updatedResults[email] = { ...updatedResults[email], fastestLap: false };
-    });
-    
-    // Then set fastest lap for the selected driver (if not DNF)
-    if (!updatedResults[driverEmail].dnf) {
-      updatedResults[driverEmail] = { 
-        ...updatedResults[driverEmail], 
-        fastestLap: true 
-      };
-    }
-    
-    setRaceResults(updatedResults);
+  const handleFastestLapChange = (driverId: string) => {
+    setDriverResults(prev => 
+      prev.map(driver => ({
+        ...driver,
+        // Clear all fastest laps first
+        fastestLap: false
+      })).map(driver => {
+        // Then set fastest lap for the selected driver if not DNF
+        if (driver.driverId === driverId && !driver.dnf) {
+          return { ...driver, fastestLap: true };
+        }
+        return driver;
+      })
+    );
   };
 
   const calculatePoints = (position: number, fastestLap: boolean, dnf: boolean): number => {
-    if (dnf) return 0; // No points for DNF
+    if (dnf) return 0;
     
     const positionPoints = pointSystem[position.toString()] || 0;
     const fastestLapPoints = fastestLap ? league.fastestLapPoint : 0;
     return positionPoints + fastestLapPoints;
   };
 
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (active.id !== over?.id) {
+      setDriverResults((prev) => {
+        const oldIndex = prev.findIndex(driver => driver.driverId === active.id);
+        const newIndex = prev.findIndex(driver => driver.driverId === over?.id);
+        
+        const reorderedDrivers = arrayMove(prev, oldIndex, newIndex);
+        
+        // Update positions based on new order
+        return reorderedDrivers.map((driver, index) => ({
+          ...driver,
+          position: index + 1
+        }));
+      });
+    }
+  };
+
   const handleSubmit = async () => {
     if (!selectedRace || !league._id) return;
-    
-    // Validate positions before submitting
-    if (duplicatePositionWarning) {
-      setError("Cannot have multiple drivers with the same position. Please resolve duplicate positions.");
-      return;
-    }
     
     try {
       setSubmitting(true);
@@ -157,11 +325,11 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
       const formattedResults: Record<string, { position: number; fastestLap?: boolean; points: number; dnf?: boolean }> = {};
       
       // Calculate points based on position and pointSystem
-      Object.entries(raceResults).forEach(([driverEmail, result]) => {
-        const { position, fastestLap, dnf } = result;
+      driverResults.forEach(driver => {
+        const { position, fastestLap, dnf, driverId } = driver;
         const points = calculatePoints(position, fastestLap, dnf);
         
-        formattedResults[driverEmail] = {
+        formattedResults[driverId] = {
           position,
           points,
           ...(fastestLap && { fastestLap: true }),
@@ -198,6 +366,12 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
       onClose={onClose}
       maxWidth="md"
       fullWidth
+      PaperProps={{
+        sx: {
+          bgcolor: 'rgba(30,30,30,0.95)',
+          backgroundImage: 'linear-gradient(180deg, rgba(30,30,30,0.9) 0%, rgba(25,25,25,1) 100%)',
+        }
+      }}
     >
       <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -215,15 +389,9 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
           </Alert>
         )}
         
-        {duplicatePositionWarning && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Warning: Multiple drivers have the same position. Each position should be unique.
-          </Alert>
-        )}
-        
         <Box sx={{ mb: 3 }}>
           <Typography variant="body2" color="text.secondary" paragraph>
-            Enter the finishing position for each driver. Mark DNF for drivers who did not finish.
+            Drag and drop drivers to reorder them based on race results. Mark DNF for drivers who did not finish.
             Only one driver can have the fastest lap.
           </Typography>
           
@@ -260,94 +428,44 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
           </Box>
         </Box>
         
-        <TableContainer component={Paper} sx={{ mt: 2 }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Driver</TableCell>
-                <TableCell>Position</TableCell>
-                <TableCell align="center">DNF</TableCell>
-                <TableCell align="center">Fastest Lap</TableCell>
-                <TableCell align="right">Points</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {league.participants && league.participants.map((driver: any) => {
-                // Using driver.email as the key consistently
-                const driverEmail = driver.email;
-                const driverResult = raceResults[driverEmail] || { position: 0, fastestLap: false, dnf: false };
+        <DndContext 
+          sensors={sensors} 
+          collisionDetection={closestCenter} 
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext 
+            items={driverResults.map(driver => driver.driverId)} 
+            strategy={verticalListSortingStrategy}
+          >
+            <List
+              sx={{ 
+                bgcolor: 'background.paper', 
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 1,
+                maxHeight: '60vh',
+                overflow: 'auto'
+              }}
+            >
+              {driverResults.map((driver) => {
                 const totalPoints = calculatePoints(
-                  driverResult.position, 
-                  driverResult.fastestLap, 
-                  driverResult.dnf
+                  driver.position, 
+                  driver.fastestLap, 
+                  driver.dnf
                 );
                 
                 return (
-                  <TableRow key={driverEmail} sx={{ 
-                    opacity: driverResult.dnf ? 0.7 : 1,
-                    bgcolor: driverResult.fastestLap ? 'rgba(purple, 0.05)' : 'inherit'
-                  }}>
-                    <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                            {standings[driverEmail]?.name || driver.name || driver.email}
-                        </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <FormControl fullWidth size="small" disabled={driverResult.dnf}>
-                        <Select
-                          value={driverResult.position}
-                          onChange={(e) => handlePositionChange(driverEmail, Number(e.target.value))}
-                          error={duplicatePositionWarning && !driverResult.dnf}
-                        >
-                          {Array.from({ length: league.participants.length }, (_, i) => (
-                            <MenuItem key={i+1} value={i+1}>
-                              {i+1}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </TableCell>
-                    <TableCell align="center">
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={driverResult.dnf}
-                            onChange={(e) => handleDNFChange(driverEmail, e.target.checked)}
-                            size="small"
-                          />
-                        }
-                        label=""
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <FormControlLabel
-                        disabled={driverResult.dnf}
-                        control={
-                          <Switch
-                            checked={driverResult.fastestLap}
-                            onChange={() => handleFastestLapChange(driverEmail)}
-                            size="small"
-                            color="secondary"
-                          />
-                        }
-                        label=""
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Typography 
-                        variant="body2" 
-                        fontWeight={totalPoints > 0 ? 'bold' : 'normal'}
-                        color={totalPoints > 0 ? 'primary' : 'text.secondary'}
-                      >
-                        {totalPoints}
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
+                  <SortableDriverItem 
+                    key={driver.driverId} 
+                    driver={driver} 
+                    totalPoints={totalPoints}
+                    onDNFChange={handleDNFChange}
+                    onFastestLapChange={handleFastestLapChange}
+                  />
                 );
               })}
-            </TableBody>
-          </Table>
-        </TableContainer>
+            </List>
+          </SortableContext>
+        </DndContext>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 3 }}>
         <Button 
@@ -360,7 +478,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
           onClick={handleSubmit} 
           variant="contained" 
           color="primary"
-          disabled={submitting || duplicatePositionWarning}
+          disabled={submitting}
           startIcon={submitting && <CircularProgress size={20} />}
         >
           {submitting ? 'Submitting...' : 'Submit Results'}

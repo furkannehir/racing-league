@@ -48,6 +48,7 @@ import { useAuth } from '../hooks/useAuth';
 import { fetchLeagueById, leaveLeague } from '../services/api';
 import { League, RaceDetails } from '../types/league';
 import SubmitRaceResultsDialog from '../components/submit-race-results';
+import InvitePlayersDialog from '../components/invite-players-dialog';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -89,9 +90,9 @@ const LeagueDetails: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [leaveLeagueDialogOpen, setLeaveLeagueDialogOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  
-    const [submitResultsDialogOpen, setSubmitResultsDialogOpen] = useState(false);
-    const [selectedRace, setSelectedRace] = useState<RaceDetails | null>(null);
+  const [submitResultsDialogOpen, setSubmitResultsDialogOpen] = useState(false);
+  const [selectedRace, setSelectedRace] = useState<RaceDetails | null>(null);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   
   // Derived state - check if user is admin or owner
   const isAdmin = league?.admins?.includes(user?.email || '') || league?.owner === user?.email;
@@ -129,6 +130,14 @@ const LeagueDetails: React.FC = () => {
     setLeague(updatedLeague);
     setSubmitResultsDialogOpen(false);
     setSelectedRace(null);
+  };
+
+  const handleOpenInviteDialog = () => {
+    setInviteDialogOpen(true);
+  };
+
+  const handleInvitesSent = () => {
+    setInviteDialogOpen(false);
   };
 
   // Handle tab change
@@ -280,6 +289,7 @@ const LeagueDetails: React.FC = () => {
                 variant="contained" 
                 color="primary" 
                 startIcon={<EmailIcon />}
+                onClick={handleOpenInviteDialog}
               >
                 Invite Players
               </Button>
@@ -489,9 +499,9 @@ const LeagueDetails: React.FC = () => {
                     <CardContent>
                         {league.next_race !== null ? (
                         <>
-                            <Typography variant="h6" gutterBottom>{league.next_race.track}</Typography>
+                            <Typography variant="h6" gutterBottom>{league.next_race?.track}</Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                            {league.next_race.date}
+                            {league.next_race?.date}
                             </Typography>
                         </>
                         ) : (
@@ -759,6 +769,13 @@ const LeagueDetails: React.FC = () => {
         league={league}
         selectedRace={selectedRace}
         onResultsSubmitted={handleResultsSubmitted}
+      />
+      <InvitePlayersDialog
+        open={inviteDialogOpen}
+        leagueId={leagueId || ''}
+        leagueName={league?.name || ''}
+        onClose={() => setInviteDialogOpen(false)}
+        onInvitesSent={handleInvitesSent}
       />
     </Box>
   );

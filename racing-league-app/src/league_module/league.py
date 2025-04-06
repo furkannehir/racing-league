@@ -147,10 +147,18 @@ class League:
 
     def add_race_result(self, race_id, results):
         """
-        Add race results to standings
-        results is a dict: {
-            'email@example.com': {'position': 1, 'fastest_lap': True}
-        }
+        Add race results to standings with extended statistics
+
+        Args:
+            race_id: The ID of the race
+            results: Dict mapping user emails to their results with extended stats
+                    Format: {'email@example.com': {
+                        'position': 1,
+                        'fastest_lap': True,
+                        'dnf': False,
+                        'wins': 1,
+                        'podiums': 1
+                    }}
         """
         race_id = str(race_id)
 
@@ -162,21 +170,25 @@ class League:
 
         # Process each participant's result
         for participant, result in results.items():
-            position = int(result['position'])
+            position = int(result.get('position', 0))
             fastest_lap = result.get('fastest_lap', False)
+            dnf = result.get('dnf', False)
 
-            # Calculate points based on position
-            points = self.pointSystem.get(str(position), 0)
+            # Calculate points based on position - no points for DNF
+            points = 0 if dnf else self.pointSystem.get(str(position), 0)
 
             # Add fastest lap point if applicable
             if fastest_lap and self.fastestLapPoint > 0:
                 points += self.fastestLapPoint
 
-            # Store race result
+            # Store race result with extended statistics
             self.standings["races"][race_id][participant] = {
                 "position": position,
                 "points": points,
-                "fastest_lap": fastest_lap
+                "fastest_lap": fastest_lap,
+                "dnf": dnf,
+                "wins": result.get('wins', 0),
+                "podiums": result.get('podiums', 0)
             }
 
         # Recalculate overall standings
@@ -184,31 +196,48 @@ class League:
 
         # Change race status to completed
         for race in self.calendar:
-            if race._id == race_id:
+            if str(race._id) == race_id:
                 race.status = "Completed"
+                break
 
         # Save changes to database
         self.save()
 
-
-
         return self.standings
 
     def calculate_overall_standings(self):
-        """Recalculate overall standings based on all race results"""
+        """Recalculate overall standings with extended statistics based on all race results"""
         overall = {}
 
-        # Initialize all participants with zero points
+        # Initialize all participants with zero values for all stats
         for participant in self.participants:
-            overall[participant] = 0
+            overall[participant] = {
+                "points": 0,
+                "wins": 0,
+                "podiums": 0,
+                "dnfs": 0,
+                "fastestLaps": 0
+            }
 
-        # Sum points from all races
+        # Sum points and stats from all races
         if "races" in self.standings:
             for race_id, race_results in self.standings["races"].items():
                 for participant, result in race_results.items():
                     if participant not in overall:
-                        overall[participant] = 0
-                    overall[participant] += result["points"]
+                        overall[participant] = {
+                            "points": 0,
+                            "wins": 0,
+                            "podiums": 0,
+                            "dnfs": 0,
+                            "fastestLaps": 0
+                        }
+
+                    # Accumulate statistics
+                    overall[participant]["points"] += result.get("points", 0)
+                    overall[participant]["wins"] += 1 if result.get("wins", 0) > 0 else 0
+                    overall[participant]["podiums"] += 1 if result.get("podiums", 0) > 0 else 0
+                    overall[participant]["dnfs"] += 1 if result.get("dnf", False) else 0
+                    overall[participant]["fastestLaps"] += 1 if result.get("fastest_lap", False) else 0
 
         self.standings["overall"] = overall
         return overall
@@ -266,7 +295,7 @@ class League:
         leagues = db.leagues.find({"public": True})
         return [League._create_league_from_document(league) for league in leagues]
 
-    def add_participant(self, participant_email):
+    def add_participant(self, participant_email, user_name=None):
         if participant_email in self.participants:
             return
 
@@ -283,7 +312,14 @@ class League:
         if "overall" not in self.standings:
             self.standings["overall"] = {}
 
-        self.standings["overall"][participant_email] = 0
+        self.standings["overall"][participant_email] = {
+            "name": user_name,
+            "points": 0,
+            "wins": 0,
+            "podiums": 0,
+            "dnfs": 0,
+            "fastestLaps": 0
+        }
 
         # Update standings in database
         db.leagues.update_one(

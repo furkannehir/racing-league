@@ -36,6 +36,14 @@ class InviteService:
         return invite
 
     @staticmethod
+    def create_invites(email_list, league_id):
+        invites = []
+        for email in email_list:
+            invites.append(InviteService.create_invite(email, league_id))
+        return invites
+
+
+    @staticmethod
     def get_invites_by_user(email):
         return Invite.get_invites_by_user(email)
 
@@ -48,14 +56,15 @@ class InviteService:
         uid = AuthService.get_current_user()
         user = auth.get_user(uid)
         invite = Invite.get_invite_by_id(invite_id)
+        userObj = User.get_user_by_mail(user.email)
         if not invite:
             raise Exception("Invite not found")
-        if user.email != invite.invited_user:
+        if userObj.email != invite.invited_user:
             raise Exception("You are not allowed to accept this invite")
         invite = Invite.get_invite_by_id(invite_id)
         if invite.status != "pending":
             raise Exception("Invite is not pending")
-        invite.league.add_participant(user.email)
+        invite.league.add_participant(userObj.email, userObj.name)
         invite.accept()
         return invite
 

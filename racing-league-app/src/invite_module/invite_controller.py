@@ -28,10 +28,10 @@ def get_sent_invites():
 def create_invite():
     try:
         data = request.json
-        if not data.get('email') or not data.get('league_id'):
+        if not data.get('emails') or not data.get('league_id'):
             return jsonify({"message": "Missing required fields"}), 400
-        invite = InviteService.create_invite(data.get('email'), data.get('league_id'))
-        return jsonify(invite.serialize()), 201
+        invites = InviteService.create_invites(data.get('emails'), data.get('league_id'))
+        return jsonify([invite.serialize() for invite in invites]), 201
     except Exception as e:
         if str(e) == "User not found":
             return jsonify({"message": "User not found"}), 404

@@ -57,13 +57,13 @@ class LeagueService:
 
         # Get unique leagues
         leagues = list(league_dict.values())
-
         # Add position information to each league
         for league in leagues:
             # Get standings info for each league
             if "overall" in league.standings:
                 # Get all participants' points and sort them in descending order
-                points_list = [(participant, points) for participant, points in league.standings["overall"].items()]
+                points_list = [(participant, data.get('points', 0)) for participant, data in
+                               league.standings["overall"].items()]
                 points_list.sort(key=lambda x: x[1], reverse=True)
 
                 # Find user's position
@@ -74,7 +74,7 @@ class LeagueService:
                         if i > 0 and points_list[i - 1][1] == points:
                             # If tied with previous participant, use their position
                             position = next((j for j, (_, p) in enumerate(points_list)
-                                                  if p == points), i) + 1
+                                             if p == points), i) + 1
                         else:
                             position = i + 1
                         break
@@ -101,13 +101,13 @@ class LeagueService:
     @staticmethod
     def submit_race_result(league_id, race_id, results):
         """
-        Submit results for a race in a league
+        Submit results for a race in a league with extended statistics tracking
 
         Args:
             league_id: The ID of the league
             race_id: The ID of the race
             results: Dict mapping user emails to their results
-                    Format: {'email@example.com': {'position': 1, 'fastest_lap': True}}
+                    Format: {'email@example.com': {'position': 1, 'fastest_lap': True, 'dnf': False}}
         """
         league = League.get_league_by_id(league_id)
         if not league:
@@ -128,7 +128,20 @@ class LeagueService:
             if participant not in league.participants:
                 raise Exception(f"Participant {participant} is not in the league")
 
-        return league.add_race_result(race_id, results)
+        # Process extended statistics from results
+        enhanced_results = {}
+        for driver, result in results.items():
+            position = result.get('position')
+            enhanced_results[driver] = {
+                'position': position,
+                'fastest_lap': result.get('fastest_lap', False),
+                'dnf': result.get('dnf', False),
+                'wins': 1 if position == 1 else 0,
+                'podiums': 1 if position and position <= 3 else 0,
+            }
+
+        # Submit the enhanced results including statistics
+        return league.add_race_result(race_id, enhanced_results)
 
     @staticmethod
     def get_league_standings(league_id):

@@ -38,7 +38,9 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     } else {
-      console.error('Request without auth token:', config.url);
+      if (!config.url?.includes('/auth')) {
+        console.error('Request without auth token:', config.url);
+      }
     }
     
     return config;
@@ -108,43 +110,6 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
-
-/**
- * Authenticate user and get token
- */
-export const login = async (username: string, password: string, remember: boolean = false): Promise<boolean> => {
-  try {
-    const response = await api.post('/auth/login', { username, password });
-    const token = response.data.token || response.headers['x-auth-token'];
-    
-    if (token) {
-      setAuthToken(token, remember);
-      return true;
-    } else {
-      console.error('Login successful but no token received');
-      return false;
-    }
-  } catch (error) {
-    console.error('Login error:', error);
-    throw error;
-  }
-};
-
-/**
- * Log user out
- */
-export const logout = async (): Promise<void> => {
-  try {
-    // Call logout endpoint if your API has one
-    await api.post('/auth/logout');
-  } catch (error) {
-    console.error('Logout API error:', error);
-    // Continue with client-side logout even if API call fails
-  } finally {
-    clearAuthToken();
-    window.location.href = '/login';
-  }
-};
 
 /**
  * Check if user is authenticated
@@ -261,9 +226,6 @@ export const declineLeagueInvite = async (inviteId: string): Promise<void> => {
 /**
  * Create a new league
  */
-/**
- * Create a new league
- */
 export const createLeague = async (leagueData: {
   name: string;
   owner: string;
@@ -357,6 +319,7 @@ export const updateUserPassword = async (passwordData: {
     throw error;
   }
 };
+
 /**
  * Fetch public leagues
  */
@@ -366,6 +329,18 @@ export const fetchPublicLeagues = async (): Promise<League[]> => {
     return response.data;
   } catch (error) {
     console.error('Error fetching public leagues:', error);
+    throw error;
+  }
+};
+
+/**
+ * Invite players to join a league
+ */
+export const invitePlayersToLeague = async (league_id: string, emails: string[]): Promise<void> => {
+  try {
+    await api.post(`/v1/invites`, { league_id, emails });
+  } catch (error) {
+    console.error('Error inviting players to league:', error);
     throw error;
   }
 };

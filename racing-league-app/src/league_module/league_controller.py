@@ -5,6 +5,8 @@ from src.league_module.league_service import LeagueService
 from src.auth_module.auth_service import AuthService
 from firebase_admin import auth
 
+from src.user_module.user import User
+
 league_blueprint = Blueprint('league', __name__, url_prefix='/api/v1/leagues')
 
 @league_blueprint.route('/all', methods=['GET'])
@@ -85,8 +87,9 @@ def join_league(league_id):
     uid = AuthService.get_current_user()
     user = auth.get_user(uid)
     league = League.get_league_by_id(league_id)
+    userObj = User.get_user_by_mail(user.email)
     if league.public:
-        league.add_participant(user.email)
+        league.add_participant(userObj.email, userObj.name)
         return jsonify({"message": "You have joined the league!"}), 200
     return jsonify({"message": "This league is private"}), 403
 

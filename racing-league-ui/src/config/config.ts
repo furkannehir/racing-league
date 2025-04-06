@@ -20,7 +20,7 @@ const getConfig = (): RacingLeagueConfig => {
             baseUrl: configJson.api?.baseUrl || 'http://localhost:5000'
         }
     };
-    if (import.meta.env.VITE_API_URL) {
+    if (import.meta.env.VITE_API_URL && import.meta.env.VITE_ENV !== 'prod') {
         defaultConfig.api.baseUrl = import.meta.env.VITE_API_URL;
     }
     
