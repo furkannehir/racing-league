@@ -13,7 +13,12 @@ import {
   Tabs,
   Tab,
   InputAdornment,
-  IconButton
+  IconButton,
+  Grid,
+  useMediaQuery,
+  useTheme,
+  Card,
+  CardContent
 } from '@mui/material';
 import {
   Google as GoogleIcon,
@@ -21,9 +26,18 @@ import {
   VisibilityOff,
   Email as EmailIcon,
   Person as PersonIcon,
-  Lock as LockIcon
+  Lock as LockIcon,
+  EmojiEvents as TrophyIcon,
+  Group as GroupIcon,
+  Timeline as TimelineIcon,
+  Leaderboard as LeaderboardIcon,
+  DirectionsCar as CarIcon
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
+
+// Import racing background image
+// You should place your image in the public folder or src/assets
+const backgroundImage = 'login_background.png'; // Update this path to your actual image
 
 const Login: React.FC = () => {
   // Form state
@@ -38,6 +52,8 @@ const Login: React.FC = () => {
   // Auth context
   const { login, signup, googleLogin, isAuthenticated, loading, error } = useAuth();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
   // Redirect if already authenticated
   if (isAuthenticated) {
@@ -79,218 +95,319 @@ const Login: React.FC = () => {
     }
   };
 
+  const features = [
+    {
+      icon: <TrophyIcon sx={{ fontSize: 36, color: 'gold' }} />,
+      title: 'Create Racing Leagues',
+      description: 'Create your own racing leagues and invite friends to compete!'
+    },
+    {
+      icon: <LeaderboardIcon sx={{ fontSize: 36, color: '#0088ff' }} />,
+      title: 'Track Standings',
+      description: 'Keep track of championship standings, race results, and statistics.'
+    },
+    {
+      icon: <TimelineIcon sx={{ fontSize: 36, color: '#00cc88' }} />,
+      title: 'Manage Your Season',
+      description: 'Set up race calendars, point systems, and manage events.'
+    },
+    {
+      icon: <GroupIcon sx={{ fontSize: 36, color: '#ff6600' }} />,
+      title: 'Join Communities',
+      description: 'Find and join public leagues to race with other enthusiasts.'
+    },
+  ];
+
   return (
-    <Container component="main" maxWidth="xs"
+    <Box
       sx={{
         minHeight: '100vh',
         minWidth: '100vw',
-        pt: 4,
-        pb: 8,
+        backgroundImage: `url(${backgroundImage})`,
+        backgroundSize: 'cover',
+        backgroundColor: 'rgba(0, 0, 0, 0.7)', // Fallback color
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundAttachment: 'fixed',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
+        padding: { xs: 2, md: 4 }
       }}
     >
-      <Box
-        sx={{
-          marginTop: 8,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-        }}
-      >
-        <Paper
-          elevation={3}
-          sx={{
-            padding: 4,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            width: '100%',
-            background: 'linear-gradient(180deg, rgba(30,30,30,0.9) 0%, rgba(20,20,20,0.95) 100%)',
-            borderRadius: 2,
-          }}
-        >
-          <Typography component="h1" variant="h5" sx={{ mb: 2, fontWeight: 'bold', color: 'primary.main' }}>
-            Racing League
-          </Typography>
-          
-          <Tabs
-            value={mode}
-            onChange={(_, newValue) => setMode(newValue)}
-            sx={{ mb: 3, width: '100%' }}
-            centered
-            indicatorColor="primary"
-            textColor="primary"
-          >
-            <Tab label="Sign In" value="login" />
-            <Tab label="Sign Up" value="signup" />
-          </Tabs>
-
-          {error && (
-            <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
-              {error}
-            </Alert>
-          )}
-
-          <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
-            {/* Name field - only show in signup mode */}
-            {mode === 'signup' && (
-              <TextField
-                margin="normal"
-                required
-                fullWidth
-                id="name"
-                label="Full Name"
-                name="name"
-                autoComplete="name"
-                autoFocus={mode === 'signup'}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <PersonIcon color="action" />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-            )}
-            
-            {/* Email field - shown in both modes */}
-            <TextField
-              margin="normal"
-              required
-              fullWidth
-              id="email"
-              label="Email Address"
-              name="email"
-              autoComplete="email"
-              autoFocus={mode === 'login'}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <EmailIcon color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-            
-            {/* Password field */}
-            <TextField
-              margin="normal"
-              required
-              fullWidth
-              name="password"
-              label="Password"
-              type={showPassword ? "text" : "password"}
-              id="password"
-              autoComplete={mode === 'login' ? "current-password" : "new-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockIcon color="action" />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      aria-label="toggle password visibility"
-                      onClick={() => setShowPassword(!showPassword)}
-                      edge="end"
-                    >
-                      {showPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                )
-              }}
-            />
-            
-            {/* Confirm Password field - only show in signup mode */}
-            {mode === 'signup' && (
-              <TextField
-                margin="normal"
-                required
-                fullWidth
-                name="confirmPassword"
-                label="Confirm Password"
-                type={showPassword ? "text" : "password"}
-                id="confirmPassword"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={loading}
-                error={!!passwordError}
-                helperText={passwordError}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <LockIcon color="action" />
-                    </InputAdornment>
-                  )
-                }}
-              />
-            )}
-
-            {/* Submit button */}
-            <Button
-              type="submit"
-              fullWidth
-              variant="contained"
-              sx={{ mt: 3, mb: 2 }}
-              disabled={loading}
-            >
-              {loading ? <CircularProgress size={24} /> : 
-                mode === 'login' ? 'Sign In' : 'Create Account'}
-            </Button>
-
-            {/* Divider with "or" text */}
-            <Box sx={{ display: 'flex', alignItems: 'center', my: 2 }}>
-              <Divider sx={{ flexGrow: 1 }} />
-              <Typography variant="body2" color="text.secondary" sx={{ mx: 2 }}>
-                OR
-              </Typography>
-              <Divider sx={{ flexGrow: 1 }} />
-            </Box>
-
-            {/* Google login button */}
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<GoogleIcon />}
-              onClick={handleGoogleLogin}
-              disabled={loading}
+      <Container>
+        <Grid container spacing={3} alignItems="center">
+          {/* Left side: Auth form */}
+          <Grid item xs={12} md={6}>
+            <Box
               sx={{
-                borderColor: '#4285F4',
-                color: '#fff',
-                textTransform: 'none',
-                '&:hover': {
-                  borderColor: '#4285F4',
-                  backgroundColor: 'rgba(66, 133, 244, 0.1)',
-                },
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
               }}
             >
-              Continue with Google
-            </Button>
+              <Paper
+                elevation={4}
+                sx={{
+                  padding: 4,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  width: '100%',
+                  background: 'linear-gradient(180deg, rgba(30,30,30,0.9) 0%, rgba(20,20,20,0.95) 100%)',
+                  borderRadius: 2,
+                  backdropFilter: 'blur(10px)',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                }}
+              >
+                <Box 
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    mb: 2
+                  }}
+                >
+                  <CarIcon sx={{ fontSize: 32, color: 'primary.main' }} />
+                  <Typography component="h1" variant="h5" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                    Racing League
+                  </Typography>
+                </Box>
+                
+                <Tabs
+                  value={mode}
+                  onChange={(_, newValue) => setMode(newValue)}
+                  sx={{ mb: 3, width: '100%' }}
+                  centered
+                  indicatorColor="primary"
+                  textColor="primary"
+                >
+                  <Tab label="Sign In" value="login" />
+                  <Tab label="Sign Up" value="signup" />
+                </Tabs>
 
-            {/* Additional help text */}
-            {mode === 'login' && (
-              <Typography variant="body2" align="center" sx={{ mt: 2 }}>
-                <Link to="/forgot-password" style={{ color: 'inherit' }}>
-                  Forgot password?
-                </Link>
-              </Typography>
-            )}
-          </Box>
-        </Paper>
-      </Box>
-    </Container>
+                {error && (
+                  <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
+                    {error}
+                  </Alert>
+                )}
+
+                <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
+                  {/* Name field - only show in signup mode */}
+                  {mode === 'signup' && (
+                    <TextField
+                      margin="normal"
+                      required
+                      fullWidth
+                      id="name"
+                      label="Full Name"
+                      name="name"
+                      autoComplete="name"
+                      autoFocus={mode === 'signup'}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      disabled={loading}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <PersonIcon color="action" />
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                  )}
+                  
+                  {/* Email field - shown in both modes */}
+                  <TextField
+                    margin="normal"
+                    required
+                    fullWidth
+                    id="email"
+                    label="Email Address"
+                    name="email"
+                    autoComplete="email"
+                    autoFocus={mode === 'login'}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={loading}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <EmailIcon color="action" />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                  
+                  {/* Password field */}
+                  <TextField
+                    margin="normal"
+                    required
+                    fullWidth
+                    name="password"
+                    label="Password"
+                    type={showPassword ? "text" : "password"}
+                    id="password"
+                    autoComplete={mode === 'login' ? "current-password" : "new-password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <LockIcon color="action" />
+                        </InputAdornment>
+                      ),
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            aria-label="toggle password visibility"
+                            onClick={() => setShowPassword(!showPassword)}
+                            edge="end"
+                          >
+                            {showPassword ? <VisibilityOff /> : <Visibility />}
+                          </IconButton>
+                        </InputAdornment>
+                      )
+                    }}
+                  />
+                  
+                  {/* Confirm Password field - only show in signup mode */}
+                  {mode === 'signup' && (
+                    <TextField
+                      margin="normal"
+                      required
+                      fullWidth
+                      name="confirmPassword"
+                      label="Confirm Password"
+                      type={showPassword ? "text" : "password"}
+                      id="confirmPassword"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      disabled={loading}
+                      error={!!passwordError}
+                      helperText={passwordError}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <LockIcon color="action" />
+                          </InputAdornment>
+                        )
+                      }}
+                    />
+                  )}
+
+                  {/* Submit button */}
+                  <Button
+                    type="submit"
+                    fullWidth
+                    variant="contained"
+                    sx={{ mt: 3, mb: 2 }}
+                    disabled={loading}
+                  >
+                    {loading ? <CircularProgress size={24} /> : 
+                      mode === 'login' ? 'Sign In' : 'Create Account'}
+                  </Button>
+
+                  {/* Divider with "or" text */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', my: 2 }}>
+                    <Divider sx={{ flexGrow: 1 }} />
+                    <Typography variant="body2" color="text.secondary" sx={{ mx: 2 }}>
+                      OR
+                    </Typography>
+                    <Divider sx={{ flexGrow: 1 }} />
+                  </Box>
+
+                  {/* Google login button */}
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={<GoogleIcon />}
+                    onClick={handleGoogleLogin}
+                    disabled={loading}
+                    sx={{
+                      borderColor: '#4285F4',
+                      color: '#fff',
+                      textTransform: 'none',
+                      '&:hover': {
+                        borderColor: '#4285F4',
+                        backgroundColor: 'rgba(66, 133, 244, 0.1)',
+                      },
+                    }}
+                  >
+                    Continue with Google
+                  </Button>
+
+                  {/* Additional help text */}
+                  {mode === 'login' && (
+                    <Typography variant="body2" align="center" sx={{ mt: 2 }}>
+                      <Link to="/forgot-password" style={{ color: 'inherit' }}>
+                        Forgot password?
+                      </Link>
+                    </Typography>
+                  )}
+                </Box>
+              </Paper>
+            </Box>
+          </Grid>
+
+          {/* Right side: Features (hidden on mobile) */}
+          {!isMobile && (
+            <Grid item xs={12} md={6}>
+              <Box sx={{ pl: { md: 4 } }}>
+                <Typography 
+                  variant="h4" 
+                  sx={{ 
+                    mb: 4, 
+                    color: 'white', 
+                    fontWeight: 600,
+                    textShadow: '0 2px 10px rgba(0,0,0,0.5)'
+                  }}
+                >
+                  Join the Racing Community
+                </Typography>
+                
+                <Grid container spacing={2}>
+                  {features.map((feature, index) => (
+                    <Grid item xs={12} sm={6} key={index}>
+                      <Card sx={{ 
+                        height: '100%', 
+                        backgroundColor: 'rgba(20,20,20,0.85)',
+                        backdropFilter: 'blur(10px)',
+                        transition: 'transform 0.2s',
+                        '&:hover': {
+                          transform: 'translateY(-4px)',
+                        }
+                      }}>
+                        <CardContent>
+                          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                            {feature.icon}
+                            <Typography variant="h6" sx={{ ml: 1 }}>
+                              {feature.title}
+                            </Typography>
+                          </Box>
+                          <Typography variant="body2" color="text.secondary">
+                            {feature.description}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
+                
+                {mode === 'signup' && (
+                  <Box sx={{ mt: 4, p: 2, borderRadius: 2, bgcolor: 'rgba(0,0,0,0.5)' }}>
+                    <Typography variant="body1" color="primary.light" sx={{ fontWeight: 500 }}>
+                      Create your account today and start racing with friends!
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            </Grid>
+          )}
+        </Grid>
+      </Container>
+    </Box>
   );
 };
 
