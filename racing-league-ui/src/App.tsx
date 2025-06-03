@@ -16,6 +16,7 @@ import Dashboard from './pages/dashboard';
 import CreateLeague from './pages/create-league';
 import ProfilePage from './pages/profile';
 import FindLeaguesPage from './pages/filnd-leagues';
+import Home from './pages/home';
 // Import other pages...
 
 // Protected route wrapper
@@ -25,7 +26,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   if (loading) return null;
   
   if (!isAuthenticated) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/" />;
   }
   
   return <MainLayout>{children}</MainLayout>;
@@ -43,6 +44,9 @@ const App: React.FC = () => {
             
             {/* Protected routes with layout */}
             <Route path="/" element={
+                <Home />
+            } />
+            <Route path="/dashboard" element={
               <ProtectedRoute>
                 <Dashboard />
               </ProtectedRoute>

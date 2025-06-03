@@ -37,7 +37,7 @@ import { useAuth } from '../hooks/useAuth';
 
 // Import racing background image
 // You should place your image in the public folder or src/assets
-const backgroundImage = 'login_background.png'; // Update this path to your actual image
+const backgroundImage = 'login_background.png'; 
 
 const Login: React.FC = () => {
   // Form state
