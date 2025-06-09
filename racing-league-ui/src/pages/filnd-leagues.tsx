@@ -31,13 +31,15 @@ import {
   Group as GroupIcon,
   Public as PublicIcon,
 } from '@mui/icons-material';
-import { isAuthenticated, fetchPublicLeagues, joinLeague } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
+import { fetchPublicLeagues, joinLeague } from '../services/api';
 import { League } from '../types/league';
 
 const LeagueCard: React.FC<{
   league: League;
   onJoin: (league: League) => void;
-}> = ({ league, onJoin }) => {
+  isUserAuthenticated: boolean;
+}> = ({ league, onJoin, isUserAuthenticated }) => {
   return (
     <Card
       sx={{
@@ -73,7 +75,7 @@ const LeagueCard: React.FC<{
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
           <GroupIcon fontSize="small" sx={{ mr: 1, opacity: 0.7 }} />
           <Typography variant="body2" color="text.secondary">
-            {league.participantsCount || league.participants.length} / {league.max_players} participants
+            {league.participantsCount || league.participants?.length || 0} / {league.max_players} participants
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
@@ -102,7 +104,7 @@ const LeagueCard: React.FC<{
           onClick={() => onJoin(league)}
           fullWidth
         >
-          Join League
+          {isUserAuthenticated ? 'Join League' : 'Sign In to Join'}
         </Button>
       </CardActions>
     </Card>
@@ -111,6 +113,7 @@ const LeagueCard: React.FC<{
 
 const FindLeaguesPage: React.FC = () => {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth(); // Use the hook instead of the function
   const [searchQuery, setSearchQuery] = useState('');
   const [leagues, setLeagues] = useState<League[]>([]);
   const [filteredLeagues, setFilteredLeagues] = useState<League[]>([]);
@@ -125,35 +128,24 @@ const FindLeaguesPage: React.FC = () => {
   const leaguesPerPage = 9;
   
   useEffect(() => {
-    const checkAuthAndFetchLeagues = async () => {
-      // Check if user is authenticated
-      if (!isAuthenticated()) {
-        // Redirect to login page if not authenticated
-        navigate('/login', { 
-          state: { 
-            from: '/find-leagues', 
-            message: 'Please log in to search for leagues' 
-          } 
-        });
-        return;
-      }
-
-      // Fetch public leagues
+    const fetchLeagues = async () => {
       try {
         setIsLoading(true);
         setError(null);
+        
+        // Fetch public leagues regardless of authentication status
         const data = await fetchPublicLeagues();
         setLeagues(data);
         setFilteredLeagues(data);
-        setIsLoading(false);
       } catch (error) {
         setError('Failed to load leagues. Please try again later.');
+      } finally {
         setIsLoading(false);
       }
     };
 
-    checkAuthAndFetchLeagues();
-  }, [navigate]);
+    fetchLeagues();
+  }, []);
 
   // Filter leagues based on search query
   useEffect(() => {
@@ -163,7 +155,6 @@ const FindLeaguesPage: React.FC = () => {
     }
 
     const query = searchQuery.toLowerCase();
-    // Only filter by name since we don't have description in the League type
     const filtered = leagues.filter(league => 
       league.name.toLowerCase().includes(query)
     );
@@ -176,16 +167,28 @@ const FindLeaguesPage: React.FC = () => {
   };
 
   const handleJoinLeague = (league: League) => {
+    // If user is not authenticated, redirect to login
+    if (!isAuthenticated) {
+      navigate('/login', { 
+        state: { 
+          from: `/search-leagues`, 
+          message: 'Please sign in to join leagues',
+          returnTo: `/search-leagues`
+        } 
+      });
+      return;
+    }
+    
+    // If authenticated, proceed with join dialog
     setSelectedLeague(league);
     setJoinDialogOpen(true);
   };
 
   const handleJoinConfirm = async () => {
-    if (!selectedLeague) return;
+    if (!selectedLeague || !isAuthenticated) return;
     
     setJoinInProgress(true);
     try {
-      // Use _id instead of id for consistency with the League type
       await joinLeague(selectedLeague._id);
       setMessage({ 
         type: 'success', 
@@ -210,7 +213,7 @@ const FindLeaguesPage: React.FC = () => {
       // Close dialog
       setJoinDialogOpen(false);
       
-      // Option to navigate to the league details
+      // Navigate to the league details
       setTimeout(() => {
         navigate(`/leagues/${selectedLeague._id}`);
       }, 1500);
@@ -241,13 +244,32 @@ const FindLeaguesPage: React.FC = () => {
   if (isLoading) {
     return (
       <Box 
-        display="flex" 
-        justifyContent="center" 
-        alignItems="center" 
-        minHeight="100vh"
-        sx={{ backgroundColor: 'background.default' }}
+        sx={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: 'background.default',
+          zIndex: 1000,
+        }}
       >
-        <CircularProgress color="primary" size={60} />
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 2,
+          }}
+        >
+          <CircularProgress color="primary" size={60} />
+          <Typography variant="body1" color="text.secondary">
+            Loading leagues...
+          </Typography>
+        </Box>
       </Box>
     );
   }
@@ -302,7 +324,35 @@ const FindLeaguesPage: React.FC = () => {
               </Typography>
             </Box>
           </Box>
+          
+          {/* Auth status indicator */}
+          {!isAuthenticated && (
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <Button 
+                variant="outlined" 
+                onClick={() => navigate('/login')}
+              >
+                Sign In
+              </Button>
+              <Button 
+                variant="contained" 
+                onClick={() => navigate('/login')}
+              >
+                Sign Up
+              </Button>
+            </Box>
+          )}
         </Box>
+        
+        {/* Authentication notice for non-logged in users */}
+        {!isAuthenticated && (
+          <Alert 
+            severity="info" 
+            sx={{ mb: 4 }}
+          >
+            You can browse leagues without signing in, but you'll need to create an account to join them.
+          </Alert>
+        )}
         
         {/* Message display */}
         {message.text && (
@@ -384,7 +434,11 @@ const FindLeaguesPage: React.FC = () => {
             <Grid container spacing={3}>
               {paginatedLeagues.map((league) => (
                 <Grid item key={league._id} xs={12} sm={6} md={4}>
-                  <LeagueCard league={league} onJoin={handleJoinLeague} />
+                  <LeagueCard 
+                    league={league} 
+                    onJoin={handleJoinLeague} 
+                    isUserAuthenticated={isAuthenticated}
+                  />
                 </Grid>
               ))}
             </Grid>

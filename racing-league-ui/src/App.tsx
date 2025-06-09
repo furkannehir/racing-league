@@ -72,9 +72,7 @@ const App: React.FC = () => {
               </ProtectedRoute>
             } />
             <Route path="/search-leagues" element={
-              <ProtectedRoute>
-                <FindLeaguesPage />
-              </ProtectedRoute>
+              <FindLeaguesPage />
             } />
 
             {/* Add other protected routes */}

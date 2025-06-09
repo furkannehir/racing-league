@@ -10,7 +10,6 @@ from src.user_module.user import User
 league_blueprint = Blueprint('league', __name__, url_prefix='/api/v1/leagues')
 
 @league_blueprint.route('/all', methods=['GET'])
-@login_required
 def get_all_leagues():
     leagues = League.get_all_leagues()
     return jsonify([league.serialize() for league in leagues]), 200

@@ -192,7 +192,7 @@ const Home: React.FC = () => {
                 <Button 
                   variant="outlined" 
                   size="large"
-                  onClick={() => navigate('/find-leagues')}
+                  onClick={() => navigate('/search-leagues')}
                   sx={{ py: 1.5, px: 4 }}
                 >
                   Explore Public Leagues
