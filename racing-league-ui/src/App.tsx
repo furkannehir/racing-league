@@ -17,6 +17,7 @@ import CreateLeague from './pages/create-league';
 import ProfilePage from './pages/profile';
 import FindLeaguesPage from './pages/filnd-leagues';
 import Home from './pages/home';
+import PublicLayout from './components/public-layout';
 // Import other pages...
 
 // Protected route wrapper
@@ -30,6 +31,21 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   }
   
   return <MainLayout>{children}</MainLayout>;
+};
+
+// Conditional layout wrapper for public pages
+const ConditionalLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth();
+  
+  if (loading) return null;
+  
+  if (isAuthenticated) {
+    return <MainLayout>{children}</MainLayout>;
+  }
+  else {
+    // If not authenticated, render children without layout
+    return <PublicLayout>{children}</PublicLayout>;
+  }
 };
 
 const App: React.FC = () => {
@@ -72,7 +88,9 @@ const App: React.FC = () => {
               </ProtectedRoute>
             } />
             <Route path="/search-leagues" element={
-              <FindLeaguesPage />
+              <ConditionalLayout>
+                <FindLeaguesPage />
+              </ConditionalLayout>
             } />
 
             {/* Add other protected routes */}

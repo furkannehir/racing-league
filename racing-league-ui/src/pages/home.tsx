@@ -8,8 +8,6 @@ import {
   Grid,
   Card,
   CardContent,
-  AppBar,
-  Toolbar,
   useTheme,
   useMediaQuery,
   Paper,
@@ -24,12 +22,10 @@ import {
   Leaderboard as LeaderboardIcon,
   BarChart as StatsIcon,
   CalendarToday as CalendarIcon,
-  Star as StarIcon,
   ArrowForward as ArrowForwardIcon,
-  Login as LoginIcon,
-  PersonAdd as SignUpIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
+import PublicHeader from '../components/public-header';
 
 const backgroundImage = 'login_background.png'; 
 
@@ -93,59 +89,21 @@ const Home: React.FC = () => {
         bgcolor: 'background.default',
         backgroundImage: `url(${backgroundImage})`,
         backgroundSize: 'cover',
-        backgroundColor: 'rgba(0, 0, 0, 0.7)', // Fallback color
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
         backgroundAttachment: 'fixed',
         }}>
-      {/* Navigation Header */}
-      <AppBar 
-        position="static" 
-        sx={{ 
-          bgcolor: 'transparent',
-          boxShadow: 'none',
-          borderBottom: '1px solid rgba(255,255,255,0.1)'
-        }}
-      >
-        <Toolbar>
-          <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-              Racing League Manager
-            </Typography>
-          </Box>
-          
-          {!isAuthenticated && (
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <Button 
-                color="inherit" 
-                onClick={() => navigate('/login')}
-                startIcon={<LoginIcon />}
-              >
-                Sign In
-              </Button>
-              <Button 
-                variant="contained" 
-                color="primary"
-                onClick={() => navigate('/login')}
-                startIcon={<SignUpIcon />}
-              >
-                Get Started
-              </Button>
-            </Box>
-          )}
-          
-          {isAuthenticated && (
-            <Button 
-              variant="contained" 
-              color="primary"
-              onClick={() => navigate('/dashboard')}
-            >
-              Go to Dashboard
-            </Button>
-          )}
-        </Toolbar>
-      </AppBar>
-
+      {/* Header */}
+      <PublicHeader />
+      <Box sx={{ pt: 8, pb: 4, textAlign: 'center', color: 'white' }}>
+        <Typography variant="h2" sx={{ fontWeight: 700, mb: 2 }}>
+          Welcome to Push To Pass
+        </Typography>
+        <Typography variant="h5" sx={{ mb: 4 }}>
+          The ultimate platform for racing enthusiasts
+        </Typography>
+      </Box>
       {/* Hero Section */}
       <Container maxWidth="lg" sx={{ py: 8 }}>
         <Grid container spacing={4} alignItems="center">
@@ -198,17 +156,6 @@ const Home: React.FC = () => {
                   Explore Public Leagues
                 </Button>
               )}
-            </Box>
-            
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                Trusted by racing communities worldwide
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 0.5 }}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <StarIcon key={star} sx={{ fontSize: 16, color: 'gold' }} />
-                ))}
-              </Box>
             </Box>
           </Grid>
           
@@ -397,7 +344,7 @@ const Home: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <CarIcon sx={{ fontSize: 24, color: 'primary.main', mr: 1 }} />
               <Typography variant="body2" color="text.secondary">
-                © 2025 Racing League Manager. All rights reserved.
+                © 2025 Push To Pass. All rights reserved.
               </Typography>
             </Box>
             

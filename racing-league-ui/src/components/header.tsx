@@ -79,7 +79,7 @@ const AppHeader: React.FC = () => {
         >
           <TrophyIcon sx={{ mr: 1 }} />
           <Typography variant="h6" noWrap component="div" sx={{ fontWeight: 600 }}>
-            Racing League
+            PushToPass
           </Typography>
         </Box>
 
