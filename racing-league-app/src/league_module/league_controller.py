@@ -4,6 +4,8 @@ from src.league_module.league import League
 from src.league_module.league_service import LeagueService
 from src.auth_module.auth_service import AuthService
 from firebase_admin import auth
+import io
+from PIL import Image
 
 from src.user_module.user import User
 
@@ -122,6 +124,45 @@ def submit_race_results(league_id, race_id):
             return jsonify({"message": "Invalid race results format"}), 400
 
         results = LeagueService.submit_race_result(league_id, race_id, data)
+        return jsonify(results), 200
+
+    except Exception as e:
+        return jsonify({"message": str(e)}), 400
+
+@league_blueprint.route('/<league_id>/races/<race_id>/extract-results', methods=['POST'])
+@login_required
+def extract_race_results(league_id, race_id):
+    try:
+
+        # Check if user is league admin or owner
+        uid = AuthService.get_current_user()
+        user = auth.get_user(uid)
+        league = LeagueService.get_league_by_id(league_id)
+        if not league:
+            return jsonify({"message": "League not found"}), 404
+
+        if user.email != league.owner and user.email not in league.admins:
+            return jsonify({"message": "Not authorized to extract results"}), 403
+
+        images = request.files.getlist('images')
+        if len(images) == 0:
+            return jsonify({"message": "No images provided"}), 400
+        if len(images) > 2:
+            return jsonify({"message": "Too many images provided. Maximum 2 images allowed"}), 400
+
+        image_list = []
+        for img in images:
+            # Ensure the file is an image
+            if img.mimetype not in ['image/jpeg', 'image/png']:
+                return jsonify({"message": "Invalid file type. Only JPEG and PNG are supported"}), 400
+            image = Image.open(io.BytesIO(img.read()))
+            if image.mode == "RGBA":
+                # Convert the image to RGB mode
+                image = image.convert("RGB")
+            image_list.append(image)
+
+        results = LeagueService.extract_race_results(image_list)
+
         return jsonify(results), 200
 
     except Exception as e:

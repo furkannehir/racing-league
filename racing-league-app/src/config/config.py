@@ -13,6 +13,7 @@ class Config:
     MONGO_URI = os.getenv('MONGO_URI')
     ENV = os.getenv('ENV')
     ORIGINS = os.getenv('ORIGINS').split(',')
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
     @staticmethod
     def init_firebase():

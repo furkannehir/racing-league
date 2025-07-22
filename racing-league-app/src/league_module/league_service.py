@@ -1,6 +1,17 @@
 from src.league_module.league import League
 from src.auth_module.auth_service import AuthService
+from src.config.config import Config
 from firebase_admin import auth
+import tempfile
+import os
+from openai import OpenAI
+from io import BytesIO
+import base64
+
+client = OpenAI(
+    # This is the default and can be omitted
+    api_key=Config.OPENAI_API_KEY
+)
 
 class LeagueService:
     
@@ -163,3 +174,67 @@ class LeagueService:
             raise Exception("Participant not found in league")
 
         return league.get_participant_standings(participant_email)
+
+    @staticmethod
+    def extract_race_results(image_files):
+        # Save temp files and create OpenAI image URL objects
+        image_data = []
+        temp_files = []
+
+        for file in image_files:
+            temp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+            file.save(temp.name)
+            temp_files.append(temp.name)
+
+            # Convert Image to base64 string
+            buffer = BytesIO()
+            file.save(buffer, format="JPEG")
+            buffer.seek(0)
+            encoded_image = base64.b64encode(buffer.read()).decode('utf-8')
+
+            image_data.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{encoded_image}"
+                }
+            })
+
+        # Prompt to extract structured results
+        prompt = """
+        Analyze the image(s) and extract any race result tables or listings.
+
+        Return the data in JSON format like this:
+        [
+          {
+            "position": 1,
+            "driver": "Name",
+            "team": "Team Name",
+            "time": "1:23.456"
+          },
+          ...
+        ]
+        If information is missing, fill only what is available.
+        """
+
+        # Create messages with system prompt and images
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an AI assistant that extracts structured data from images."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    *image_data
+                ]
+            }
+        ]
+
+        # Make API call with correct format
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages
+        )
+
+        return response.choices[0].message.content
