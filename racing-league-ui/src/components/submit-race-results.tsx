@@ -19,13 +19,18 @@ import {
   ListItemText,
   Card,
   Avatar,
+  Paper,
+  Divider,
 } from '@mui/material';
 import {
   Info as InfoIcon,
   EmojiEvents as TrophyIcon,
   Speed as SpeedIcon,
   Close as CloseIcon,
-  DragIndicator as DragIcon
+  DragIndicator as DragIcon,
+  CloudUpload as UploadIcon,
+  AutoAwesome as AIIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import {
   DndContext,
@@ -44,7 +49,7 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { submitRaceResult } from '../services/api';
+import { submitRaceResult, processRaceScreenshot, processMultipleRaceScreenshots } from '../services/api';
 import { League, RaceDetails } from '../types/league';
 
 interface SubmitRaceResultsDialogProps {
@@ -217,6 +222,9 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   const [driverResults, setDriverResults] = useState<DriverResult[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadedImages, setUploadedImages] = useState<File[]>([]);
+  const [processingImages, setProcessingImages] = useState(false);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   
   // Set up sensors for drag and drop
   const sensors = useSensors(
@@ -252,8 +260,139 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
         : [];
       
       setDriverResults(initialResults);
+      // Reset upload state when dialog opens
+      setUploadedImages([]);
+      setImagePreviews([]);
+      setError(null);
     }
   }, [open, selectedRace, league.participants, standings]);
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      const newFiles = Array.from(files);
+      
+      // Validate file types (only JPEG and PNG as per backend)
+      const validFiles = newFiles.filter(file => 
+        file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/jpg'
+      );
+      
+      if (validFiles.length !== newFiles.length) {
+        setError('Only JPEG and PNG files are supported. Some files were ignored.');
+      }
+      
+      // Limit to 2 images total as per backend constraint
+      const currentCount = uploadedImages.length;
+      const availableSlots = 2 - currentCount;
+      const filesToAdd = validFiles.slice(0, availableSlots);
+      
+      if (validFiles.length > availableSlots) {
+        setError(`Maximum 2 images allowed. Only the first ${availableSlots} image(s) were added.`);
+      }
+      
+      setUploadedImages(prev => [...prev, ...filesToAdd]);
+      
+      // Create previews for new files
+      filesToAdd.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setImagePreviews(prev => [...prev, e.target?.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
+      
+      // Clear error if we successfully added files and no validation issues
+      if (filesToAdd.length > 0 && validFiles.length <= availableSlots && validFiles.length === newFiles.length) {
+        setError(null);
+      }
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setUploadedImages(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const processImageWithAI = async () => {
+    if (!uploadedImages.length || !selectedRace) return;
+
+    setProcessingImages(true);
+    setError(null);
+
+    try {
+      let response;
+      
+      if (uploadedImages.length === 1) {
+        // Use single image API for one image
+        response = await processRaceScreenshot(
+          uploadedImages[0],
+          league._id,
+          selectedRace._id
+        );
+      } else {
+        // Use multiple images API for efficiency
+        response = await processMultipleRaceScreenshots(
+          uploadedImages,
+          league._id,
+          selectedRace._id
+        );
+      }
+      
+      // Parse the response if it's a string (OpenAI returns JSON string)
+      let extractedResults: any[] = [];
+      if (typeof response === 'string') {
+        try {
+          extractedResults = JSON.parse(response);
+        } catch (parseError) {
+          console.error('Failed to parse AI response:', parseError);
+          setError('Failed to parse AI response. Please try again.');
+          return;
+        }
+      } else if (Array.isArray(response)) {
+        extractedResults = response;
+      } else if (response?.results && Array.isArray(response.results)) {
+        extractedResults = response.results;
+      }
+      
+      // Map extracted results to driver results
+      if (extractedResults.length > 0) {
+        const updatedResults = driverResults.map(driver => {
+          // Try to match by driver name (case-insensitive)
+          const aiResult = extractedResults.find((result: any) => 
+            result.driver && 
+            driver.name.toLowerCase().includes(result.driver.toLowerCase()) ||
+            result.driver.toLowerCase().includes(driver.name.toLowerCase())
+          );
+          
+          if (aiResult && aiResult.position) {
+            return {
+              ...driver,
+              position: aiResult.position,
+              dnf: false, // Set default values since API doesn't provide these
+              fastestLap: false,
+            };
+          }
+          return driver;
+        });
+        
+        // Sort by position and update remaining positions
+        const sortedResults = updatedResults.sort((a, b) => a.position - b.position);
+        const finalResults = sortedResults.map((driver, index) => ({
+          ...driver,
+          position: driver.position || index + 1 // Ensure all drivers have positions
+        }));
+        
+        setDriverResults(finalResults);
+      } else {
+        setError('No race results were extracted from the images. Please check the image quality and try again.');
+      }
+    } catch (err: any) {
+      console.error('Error processing images:', err);
+      setError(err?.response?.data?.message || err?.message || 'Failed to process images');
+    } finally {
+      setProcessingImages(false);
+    }
+  };
 
   const handleDNFChange = (driverId: string, isDNF: boolean) => {
     setDriverResults(prev => 
@@ -388,6 +527,115 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
             {error}
           </Alert>
         )}
+        
+        {/* Image Upload Section */}
+        <Paper 
+          elevation={2} 
+          sx={{ 
+            p: 3, 
+            mb: 3, 
+            border: '2px dashed',
+            borderColor: uploadedImages.length > 0 ? 'primary.main' : 'grey.500',
+            bgcolor: uploadedImages.length > 0 ? 'primary.light' : 'background.paper',
+            opacity: uploadedImages.length > 0 ? 0.9 : 1,
+          }}
+        >
+          <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+            <AIIcon sx={{ mr: 1 }} />
+            AI-Powered Results Generation
+          </Typography>
+          
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Upload up to 2 screenshots of the race results and let AI automatically generate the race positions for you.
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <input
+              accept="image/jpeg,image/png,image/jpg"
+              style={{ display: 'none' }}
+              id="race-screenshot-upload"
+              type="file"
+              onChange={handleImageUpload}
+              multiple
+              disabled={uploadedImages.length >= 2}
+            />
+            <label htmlFor="race-screenshot-upload">
+              <Button
+                variant="outlined"
+                component="span"
+                startIcon={<UploadIcon />}
+                fullWidth
+                sx={{ height: 48 }}
+                disabled={uploadedImages.length >= 2}
+              >
+                {uploadedImages.length >= 2 
+                  ? 'Maximum 2 screenshots reached' 
+                  : uploadedImages.length > 0 
+                    ? `Add Screenshots (${uploadedImages.length}/2 uploaded)` 
+                    : 'Upload Race Screenshots (Max 2)'}
+              </Button>
+            </label>
+            
+            {imagePreviews.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 2 }}>
+                  Uploaded Screenshots ({imagePreviews.length}):
+                </Typography>
+                <Box sx={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                  gap: 2 
+                }}>
+                  {imagePreviews.map((preview, index) => (
+                    <Box key={index} sx={{ position: 'relative' }}>
+                      <img 
+                        src={preview} 
+                        alt={`Race screenshot ${index + 1}`} 
+                        style={{ 
+                          width: '100%', 
+                          height: '120px', 
+                          objectFit: 'cover',
+                          borderRadius: '8px'
+                        }} 
+                      />
+                      <IconButton
+                        size="small"
+                        onClick={() => removeImage(index)}
+                        sx={{
+                          position: 'absolute',
+                          top: 4,
+                          right: 4,
+                          bgcolor: 'rgba(0,0,0,0.7)',
+                          color: 'white',
+                          '&:hover': {
+                            bgcolor: 'rgba(0,0,0,0.9)',
+                          }
+                        }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            )}
+            
+            {uploadedImages.length > 0 && (
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={processingImages ? <CircularProgress size={20} /> : <AIIcon />}
+                onClick={processImageWithAI}
+                disabled={processingImages}
+                sx={{ mt: 1 }}
+              >
+                {processingImages ? `Analyzing ${uploadedImages.length} Screenshot${uploadedImages.length > 1 ? 's' : ''}...` : `Extract Results from ${uploadedImages.length} Screenshot${uploadedImages.length > 1 ? 's' : ''}`}
+              </Button>
+            )}
+          </Box>
+        </Paper>
+        
+        <Divider sx={{ mb: 3 }} />
         
         <Box sx={{ mb: 3 }}>
           <Typography variant="body2" color="text.secondary" paragraph>

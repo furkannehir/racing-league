@@ -23,13 +23,18 @@ class LeagueService:
 
         # Convert date strings to datetime objects for calendar entries
         if 'calendar' in data and data['calendar']:
-            from datetime import datetime
+            from datetime import datetime, timezone
             for race in data['calendar']:
                 if 'date' in race and isinstance(race['date'], str):
                     try:
-                        race['date'] = datetime.fromisoformat(race['date'].replace('Z', '+00:00'))
+                        if race['date'].endswith('Z'):
+                            race['date'] = datetime.fromisoformat(race['date'].replace('Z', '+00:00'))
+                        else:
+                            race['date'] = datetime.fromisoformat(race['date'])
+                            if not race['date'].tzinfo:
+                                race['date'] = race['date'].replace(tzinfo=timezone.utc)
                     except (ValueError, TypeError):
-                        race['date'] = datetime.now()
+                        race['date'] = datetime.now(timezone.utc)
 
         league = League._create_league_from_document(data)
         league.save()

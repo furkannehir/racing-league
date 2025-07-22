@@ -1,17 +1,17 @@
 # project/src/models/user.py
 from bson.objectid import ObjectId
 from src.config.mongo import db
-from datetime import datetime
+from datetime import datetime, timezone
 
 class User:
-    def __init__(self, _id, name, email, eaUsername, leagues=[], races=[], created_at=datetime.now(), updated_at=None, deleted_at=None):
+    def __init__(self, _id, name, email, eaUsername, leagues=[], races=[], created_at=None, updated_at=None, deleted_at=None):
         self._id = _id
         self.name = name
         self.email = email
         self.eaUsername = eaUsername
         self.leagues = leagues
         self.races = races
-        self.created_at = created_at
+        self.created_at = created_at if created_at is not None else datetime.now(timezone.utc)
         self.updated_at = updated_at
         self.deleted_at = deleted_at
 
@@ -84,7 +84,7 @@ class User:
     def delete_user(user_id):
         db.users.update_one(
             {"_id": ObjectId(user_id)},
-            {"$set": {"deleted_at": datetime.now()}}
+            {"$set": {"deleted_at": datetime.now(timezone.utc)}}
         )
 
     def to_dict(self):

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from bson import ObjectId
 
@@ -8,13 +8,13 @@ from src.user_module.user import User
 
 
 class Invite:
-    def __init__(self, invited_user, league, inviter, status="pending", _id=None, created_at=datetime.now(), updated_at=None, deleted_at=None):
+    def __init__(self, invited_user, league, inviter, status="pending", _id=None, created_at=None, updated_at=None, deleted_at=None):
         self._id = _id
         self.invited_user = invited_user
         self.league = league
         self.inviter = inviter
         self.status = status
-        self.created_at = created_at
+        self.created_at = created_at if created_at is not None else datetime.now(timezone.utc)
         self.updated_at = updated_at
         self.deleted_at = deleted_at
 
@@ -58,7 +58,7 @@ class Invite:
         )
 
     def delete(self):
-        db.invites.update_one({"_id": self._id}, {"$set": {"deleted_at": datetime.now()}})
+        db.invites.update_one({"_id": self._id}, {"$set": {"deleted_at": datetime.now(timezone.utc)}})
 
     def accept(self):
         self.status = "accepted"

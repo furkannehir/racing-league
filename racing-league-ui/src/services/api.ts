@@ -345,4 +345,73 @@ export const invitePlayersToLeague = async (league_id: string, emails: string[])
   }
 };
 
+/**
+ * Process race screenshot with AI to extract race results using existing API
+ */
+export const processRaceScreenshot = async (
+  image: File, 
+  leagueId: string, 
+  raceId: string
+): Promise<{
+  results: Array<{
+    driverId: string;
+    position: number;
+    dnf?: boolean;
+    fastestLap?: boolean;
+  }>;
+}> => {
+  try {
+    const formData = new FormData();
+    formData.append('images', image);
+
+    const response = await api.post(`/v1/leagues/${leagueId}/races/${raceId}/extract-results`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error processing race screenshot:', error);
+    throw error;
+  }
+};
+
+/**
+ * Process multiple race screenshots with AI to extract race results (max 2 images)
+ */
+export const processMultipleRaceScreenshots = async (
+  images: File[], 
+  leagueId: string, 
+  raceId: string
+): Promise<{
+  results: Array<{
+    driverId: string;
+    position: number;
+    dnf?: boolean;
+    fastestLap?: boolean;
+  }>;
+}> => {
+  try {
+    // Limit to 2 images as per backend constraint
+    const limitedImages = images.slice(0, 2);
+    
+    const formData = new FormData();
+    limitedImages.forEach((image) => {
+      formData.append('images', image);
+    });
+
+    const response = await api.post(`/v1/leagues/${leagueId}/races/${raceId}/extract-results`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error processing multiple race screenshots:', error);
+    throw error;
+  }
+};
+
 export default api;

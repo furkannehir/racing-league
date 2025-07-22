@@ -5,11 +5,11 @@ from src.league_module.race import Race
 from src.user_module.user import User
 
 class League:
-    def __init__(self, name, owner, public, calendar, pointSystem, status, max_players=20, fastestLapPoint=0, _id=None, standings={}, participants=[], admins=[], created_at=datetime.now(), updated_at=None, deleted_at=None):
+    def __init__(self, name, owner, public, calendar, pointSystem, status, max_players=20, fastestLapPoint=0, _id=None, standings={}, participants=[], admins=[], created_at=None, updated_at=None, deleted_at=None):
         self._id = _id
         self.admins = admins
         self.calendar = calendar
-        self.created_at = created_at
+        self.created_at = created_at if created_at is not None else datetime.now(timezone.utc)
         self.deleted_at = deleted_at
         self.fastestLapPoint = fastestLapPoint
         self.max_players = max_players
@@ -34,15 +34,47 @@ class League:
         current_time = datetime.now(timezone.utc)
 
         for race in self.calendar:
-            # Ensure race date is timezone aware for proper comparison
+            # Ensure race date is a proper datetime object and timezone aware
             race_date = race.date
-            if not race_date.tzinfo:
-                # If race date is naive, assume it's in UTC
-                race_date = race_date.replace(tzinfo=timezone.utc)
+            if isinstance(race_date, str):
+                # If somehow we still have a string, parse it
+                try:
+                    if race_date.endswith('Z'):
+                        race_date = datetime.fromisoformat(race_date.replace('Z', '+00:00'))
+                    else:
+                        race_date = datetime.fromisoformat(race_date)
+                        if not race_date.tzinfo:
+                            race_date = race_date.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    continue  # Skip this race if we can't parse the date
+            elif isinstance(race_date, datetime):
+                if not race_date.tzinfo:
+                    # If race date is naive, assume it's in UTC
+                    race_date = race_date.replace(tzinfo=timezone.utc)
+            else:
+                continue  # Skip if date is neither string nor datetime
 
             if race.status == "Upcoming" and race_date > current_time:
-                if next_race is None or race_date < next_race.date:
+                if next_race is None:
                     next_race = race
+                else:
+                    next_race_date = next_race.date
+                    if isinstance(next_race_date, str):
+                        try:
+                            if next_race_date.endswith('Z'):
+                                next_race_date = datetime.fromisoformat(next_race_date.replace('Z', '+00:00'))
+                            else:
+                                next_race_date = datetime.fromisoformat(next_race_date)
+                                if not next_race_date.tzinfo:
+                                    next_race_date = next_race_date.replace(tzinfo=timezone.utc)
+                        except (ValueError, TypeError):
+                            next_race = race
+                            continue
+                    elif isinstance(next_race_date, datetime) and not next_race_date.tzinfo:
+                        next_race_date = next_race_date.replace(tzinfo=timezone.utc)
+                    
+                    if race_date < next_race_date:
+                        next_race = race
 
         return next_race
 
@@ -103,7 +135,7 @@ class League:
     def save(self):
         """Save or update the league in MongoDB"""
         self.participantsCount = len(self.participants)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
 
         if self._id:
             # Update existing league
@@ -260,7 +292,7 @@ class League:
     def delete_league(league_id):
         db.leagues.update_one(
             {"_id": ObjectId(league_id)},
-            {"$set": {"deleted_at": datetime.now()}}
+            {"$set": {"deleted_at": datetime.now(timezone.utc)}}
         )
 
     @staticmethod
@@ -358,7 +390,7 @@ class League:
             standings=league_data.get('standings', {}),
             participants=league_data.get('participants', []),
             admins=league_data.get('admins', []),
-            created_at=league_data.get('created_at', datetime.now()),
+            created_at=league_data.get('created_at', datetime.now(timezone.utc)),
             updated_at=league_data.get('updated_at'),
             deleted_at=league_data.get('deleted_at')
         )
