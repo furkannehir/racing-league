@@ -234,12 +234,35 @@ class LeagueService:
                     *image_data
                 ]
             }
-        ]
-
-        # Make API call with correct format
+        ]        # Make API call with correct format
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages
         )
 
-        return response.choices[0].message.content
+        # Extract and parse JSON from the response
+        content = response.choices[0].message.content
+        
+        # Clean up the response - remove markdown code blocks if present
+        import json
+        import re
+        
+        # Remove ```json and ``` markers
+        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+        if json_match:
+            json_string = json_match.group(1)
+        else:
+            # If no markdown blocks, assume the entire content is JSON
+            json_string = content
+        
+        try:
+            # Parse the JSON string into a Python object
+            race_results = json.loads(json_string)
+            return race_results
+        except json.JSONDecodeError as e:
+            # If parsing fails, return the original string with error info
+            return {
+                "error": "Failed to parse JSON",
+                "raw_content": content,
+                "json_error": str(e)
+            }
