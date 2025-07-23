@@ -3,15 +3,24 @@ from src.auth_module.auth_service import AuthService
 from src.config.config import Config
 from firebase_admin import auth
 import tempfile
-import os
-from openai import OpenAI
 from io import BytesIO
 import base64
 
-client = OpenAI(
-    # This is the default and can be omitted
-    api_key=Config.OPENAI_API_KEY
-)
+client = None
+
+def get_openai_client():
+    global client
+    if client is None:
+        try:
+            from openai import OpenAI
+            if not Config.OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY not found in environment variables")
+            client = OpenAI(api_key=Config.OPENAI_API_KEY)
+        except ImportError as e:
+            raise ImportError(f"OpenAI package not installed: {e}")
+        except Exception as e:
+            raise Exception(f"Failed to initialize OpenAI client: {e}")
+    return client
 
 class LeagueService:
     
@@ -235,6 +244,7 @@ class LeagueService:
                 ]
             }
         ]        # Make API call with correct format
+        client = get_openai_client()
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages
