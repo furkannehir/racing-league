@@ -198,6 +198,7 @@ Desktop.ini
 .project
 .classpath
 .settings/
+*/.vscode/
 
 # Docker
 .docker/data/
