@@ -16,6 +16,8 @@ def login():
 
     id_token, uid = AuthService.login_user(email, password)
     user = User.get_user_by_mail(email)
+    if not user:
+        return jsonify({"message": "User not found."}), 404
     if id_token and uid:
         # No longer creating a session
         return jsonify({

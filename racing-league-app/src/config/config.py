@@ -14,6 +14,7 @@ class Config:
     ENV = os.getenv('ENV')
     ORIGINS = os.getenv('ORIGINS').split(',')
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', 'racing_league')
 
     @staticmethod
     def init_firebase():

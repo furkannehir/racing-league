@@ -5,7 +5,7 @@ from src.config.config import Config
 
 # Connect to MongoDB
 client = MongoClient(Config.MONGO_URI)
-db = client['racing_league']
+db = client[Config.MONGO_DB_NAME]
 
 # Example function to get the database object if needed elsewhere
 def get_db():
