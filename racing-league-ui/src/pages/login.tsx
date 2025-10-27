@@ -48,6 +48,7 @@ const Login: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
 
   // Auth context
   const { login, signup, googleLogin, isAuthenticated, loading, error } = useAuth();
@@ -77,10 +78,11 @@ const Login: React.FC = () => {
     try {
       if (mode === 'login') {
         await login(email, password);
+        navigate('/');
       } else {
         await signup(name, email, password);
+        setMessage('Registration successful! Please verify your email.');
       }
-      navigate('/');
     } catch (err) {
       // Error is handled by useAuth
     }
@@ -189,6 +191,11 @@ const Login: React.FC = () => {
                 {error && (
                   <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
                     {error}
+                  </Alert>
+                )}
+                {message && (
+                  <Alert severity="success" sx={{ width: '100%', mb: 2 }}>
+                    {message}
                   </Alert>
                 )}
 

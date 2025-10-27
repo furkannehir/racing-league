@@ -7,9 +7,9 @@ from src.invite_module.invite_controller import invite_blueprint
 from src.user_module.user_controller import user_blueprint
 from flask_cors import CORS
 from src.config.config import Config
-from src.check_alive_module.ping import start_scheduler
+# from src.check_alive_module.ping import start_scheduler
 
-start_scheduler()
+# start_scheduler()
 app = Flask(__name__)
 CORS(app, supports_credentials=True, origins=Config.ORIGINS)
 app.config.from_object(Config)

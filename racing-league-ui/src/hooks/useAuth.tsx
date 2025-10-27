@@ -55,6 +55,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setUser(user);
       setIsAuthenticated(true);
     } catch (err: any) {
+      console.log('Login error:', err);
       const errorMessage = err.response?.data?.message || 
                           err.response?.data?.error || 
                           err.message || 
@@ -72,20 +73,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setLoading(true);
       setError(null);
       
-      const response = await api.post('/v1/auth/register', {
+      await api.post('/v1/auth/register', {
         name,
         email,
         password
       });
-
-      const { token, user } = response.data;
       
-      // Store in session storage by default for new users
-      sessionStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      
-      setUser(user);
-      setIsAuthenticated(true);
     } catch (err: any) {
       const errorMessage = err.response?.data?.message || 
                           err.response?.data?.error || 
@@ -220,7 +213,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         googleLogin,
         logout,
         loading,
-        error 
+        error
       }}
     >
       {children}

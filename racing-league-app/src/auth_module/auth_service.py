@@ -59,7 +59,33 @@ class AuthService:
             return id_token, user_id  # Return the ID token and user ID
         else:
             return None, None
-        
+
+    @staticmethod
+    def check_email_verified(user_id):
+        user = auth.get_user(user_id)
+        if user.email_verified:
+            return True
+        print(auth.generate_email_verification_link(user.email))
+        return False
+    
+    @staticmethod
+    def generate_verification_link(email):
+        """Generate email verification link"""
+        try:
+            link = auth.generate_email_verification_link(email)
+            return link
+        except Exception as e:
+            return str(e)
+
+    @staticmethod
+    def generate_reset_password_link(email):
+        """Generate password reset link"""
+        try:
+            link = auth.generate_password_reset_link(email)
+            return link
+        except Exception as e:
+            return str(e)
+
     @staticmethod
     def create_session(user_id):
         """Create a user session"""
@@ -90,6 +116,7 @@ class AuthService:
                 email=email,
                 password=password
             )
+            auth.generate_email_verification_link(user.email)
             return user
         except Exception as e:
             return str(e)
@@ -125,3 +152,4 @@ class AuthService:
             return True
         except Exception as e:
             return str(e)
+

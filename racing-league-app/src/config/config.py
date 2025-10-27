@@ -15,6 +15,11 @@ class Config:
     ORIGINS = os.getenv('ORIGINS').split(',')
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', 'racing_league')
+    SENDER_EMAIL = os.getenv('SENDER_EMAIL')
+    SENDER_NAME = os.getenv('SENDER_NAME')
+    MAILER_SENDER_API_KEY = os.getenv('MAILER_SENDER_API_KEY')
+    VERIFICATION_EMAIL_TEMPLATE_ID = os.getenv('VERIFICATION_EMAIL_TEMPLATE_ID')
+    RESET_PASSWORD_EMAIL_TEMPLATE_ID = os.getenv('RESET_PASSWORD_EMAIL_TEMPLATE_ID')
 
     @staticmethod
     def init_firebase():

@@ -63,7 +63,7 @@ api.interceptors.response.use(
     
     return response;
   },
-  async (error: AxiosError) => {
+  async (error: AxiosError<any>) => {
     if (!error.response) {
       console.error('Network error:', error.message);
       return Promise.reject(new Error('Network error. Please check your connection.'));
@@ -80,8 +80,8 @@ api.interceptors.response.use(
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
-      
-      return Promise.reject(new Error('Authentication failed. Please log in again.'));
+
+      return Promise.reject(new Error(error.response.data.message || 'Authentication error. Please log in again.'));
     }
     
     // Handle redirects
