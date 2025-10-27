@@ -19,7 +19,7 @@ def login():
     user = User.get_user_by_mail(email)
     if not user:
         return jsonify({"message": "User not found."}), 404
-    if not AuthService.check_email_verified(uid):
+    if not AuthService.check_email_verified(user.email):
         return jsonify({"message": "Email not verified."}), 401
     if id_token and uid:
         # No longer creating a session

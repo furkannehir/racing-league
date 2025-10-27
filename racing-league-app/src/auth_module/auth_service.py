@@ -61,11 +61,10 @@ class AuthService:
             return None, None
 
     @staticmethod
-    def check_email_verified(user_id):
-        user = auth.get_user(user_id)
+    def check_email_verified(user_email):
+        user = auth.get_user_by_email(user_email)
         if user.email_verified:
             return True
-        print(auth.generate_email_verification_link(user.email))
         return False
     
     @staticmethod
