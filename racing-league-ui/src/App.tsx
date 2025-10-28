@@ -18,6 +18,7 @@ import ProfilePage from './pages/profile';
 import FindLeaguesPage from './pages/filnd-leagues';
 import Home from './pages/home';
 import PublicLayout from './components/public-layout';
+import ResetPassword from './pages/reset-password';
 // Import other pages...
 
 // Protected route wrapper
@@ -61,6 +62,9 @@ const App: React.FC = () => {
             {/* Protected routes with layout */}
             <Route path="/" element={
                 <Home />
+            } />
+            <Route path="/reset-password" element={
+              <ResetPassword />
             } />
             <Route path="/dashboard" element={
               <ProtectedRoute>

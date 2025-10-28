@@ -31,9 +31,12 @@ import {
   Group as GroupIcon,
   Timeline as TimelineIcon,
   Leaderboard as LeaderboardIcon,
-  DirectionsCar as CarIcon
+  DirectionsCar as CarIcon,
+  Send as SendIcon
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
+import { verification_email } from '../services/api';
+import PublicHeader from '../components/public-header';
 
 // Import racing background image
 // You should place your image in the public folder or src/assets
@@ -49,6 +52,9 @@ const Login: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
 
   // Auth context
   const { login, signup, googleLogin, isAuthenticated, loading, error } = useAuth();
@@ -70,10 +76,19 @@ const Login: React.FC = () => {
     return true;
   };
 
+  const handleModeChange = (newMode: 'login' | 'signup') => {
+    setMode(newMode);
+    setShowResendVerification(false);
+    setMessage(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validatePassword()) return;
+    
+    setShowResendVerification(false);
+    setMessage(null);
     
     try {
       if (mode === 'login') {
@@ -81,10 +96,32 @@ const Login: React.FC = () => {
         navigate('/');
       } else {
         await signup(name, email, password);
-        setMessage('Registration successful! Please verify your email.');
+        setMessage('Registration successful! Please check your email to verify your account.');
+        setShowResendVerification(true);
+        setVerificationEmail(email);
       }
+    } catch (err: any) {
+      // Check if error is related to email verification
+      const errorMessage = err.message || '';
+      if (errorMessage.toLowerCase().includes('verify') || 
+          errorMessage.toLowerCase().includes('verification') ||
+          errorMessage.toLowerCase().includes('not verified')) {
+        setShowResendVerification(true);
+        setVerificationEmail(email);
+      }
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setResendingVerification(true);
+    try {
+      await verification_email(verificationEmail);
+      setMessage('Verification email sent! Please check your inbox.');
     } catch (err) {
-      // Error is handled by useAuth
+      setMessage('Verification email sent! Please check your inbox.');
+    } finally {
+      setResendingVerification(false);
+      setShowResendVerification(false);
     }
   };
 
@@ -123,22 +160,27 @@ const Login: React.FC = () => {
   return (
     <Box
       sx={{
-        minHeight: '100vh',
-        minWidth: '100vw',
+        minHeight: '100vh', 
+        minWidth: '100vw', 
+        bgcolor: 'background.default',
         backgroundImage: `url(${backgroundImage})`,
         backgroundSize: 'cover',
-        backgroundColor: 'rgba(0, 0, 0, 0.7)', // Fallback color
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
         backgroundAttachment: 'fixed',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: { xs: 2, md: 4 }
+        
       }}
     >
+      <PublicHeader />
       <Container>
-        <Grid container spacing={3} alignItems="center">
+        <Grid 
+          container 
+          spacing={3} 
+          alignItems="center"
+          justifyContent="center"
+          sx={{ minHeight: '90vh' }}
+          >
           {/* Left side: Auth form */}
           <Grid item xs={12} md={6}>
             <Box
@@ -178,7 +220,7 @@ const Login: React.FC = () => {
                 
                 <Tabs
                   value={mode}
-                  onChange={(_, newValue) => setMode(newValue)}
+                  onChange={(_, newValue) => handleModeChange(newValue)}
                   sx={{ mb: 3, width: '100%' }}
                   centered
                   indicatorColor="primary"
@@ -197,6 +239,24 @@ const Login: React.FC = () => {
                   <Alert severity="success" sx={{ width: '100%', mb: 2 }}>
                     {message}
                   </Alert>
+                )}
+                {showResendVerification && (
+                  <Box sx={{ width: '100%', mb: 2 }}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      startIcon={<SendIcon />}
+                      onClick={handleResendVerification}
+                      disabled={resendingVerification}
+                      sx={{ textTransform: 'none' }}
+                    >
+                      {resendingVerification ? (
+                        <CircularProgress size={24} />
+                      ) : (
+                        'Resend Verification Email'
+                      )}
+                    </Button>
+                  </Box>
                 )}
 
                 <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
@@ -331,7 +391,7 @@ const Login: React.FC = () => {
                     variant="outlined"
                     startIcon={<GoogleIcon />}
                     onClick={handleGoogleLogin}
-                    disabled={loading}
+                    disabled={true}  // Temporarily disable Google login
                     sx={{
                       borderColor: '#4285F4',
                       color: '#fff',
@@ -342,13 +402,13 @@ const Login: React.FC = () => {
                       },
                     }}
                   >
-                    Continue with Google
+                    Continue with Google (Coming Soon)
                   </Button>
 
                   {/* Additional help text */}
                   {mode === 'login' && (
                     <Typography variant="body2" align="center" sx={{ mt: 2 }}>
-                      <Link to="/forgot-password" style={{ color: 'inherit' }}>
+                      <Link to="/reset-password" style={{ color: 'inherit' }}>
                         Forgot password?
                       </Link>
                     </Typography>

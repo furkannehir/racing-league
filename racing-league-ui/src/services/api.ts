@@ -414,4 +414,22 @@ export const processMultipleRaceScreenshots = async (
   }
 };
 
+export const reset_password = async (email: string): Promise<void> => {
+  try {
+    await api.post('/v1/auth/reset-password', { email });
+  } catch (error) {
+    console.error('Error requesting password reset:', error);
+    throw error;
+  }
+};
+
+export const verification_email = async (email: string): Promise<void> => {
+  try {
+    await api.post('/v1/auth/verification-email', { email });
+  } catch (error) {
+    console.error('Error requesting email verification:', error);
+    throw error;
+  }
+};
+
 export default api;

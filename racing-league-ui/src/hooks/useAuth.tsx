@@ -56,10 +56,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setIsAuthenticated(true);
     } catch (err: any) {
       console.log('Login error:', err);
-      const errorMessage = err.response?.data?.message || 
+      let errorMessage = err.response?.data?.message || 
                           err.response?.data?.error || 
                           err.message || 
                           'Authentication failed. Please try again.';
+      if (errorMessage.toLowerCase().includes('not verified')) {
+        errorMessage = 'Your email is not verified. Please check your email to verify your account.';
+      }
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
