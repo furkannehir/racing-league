@@ -3,7 +3,7 @@
 ## Introduction
 This is a comprehensive racing league management system built with a Flask backend API and React (Vite) frontend. The application allows league administrators to manage races, teams, drivers, and results, while providing participants and fans with real-time information about upcoming events and standings.
 ### Demo page
-https://best-league-service.onrender.com/
+https://www.pushtopass.app/
 
 ## Tech Stack
 
