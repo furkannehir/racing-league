@@ -12,6 +12,7 @@ import {
   Avatar,
   Chip,
   Fade,
+  Alert,
 } from '@mui/material';
 import {
   Speed as SpeedIcon,
@@ -81,6 +82,23 @@ const Dashboard: React.FC = () => {
       }}
     >
       <Container maxWidth="lg">
+        {/* Beta Version Notice */}
+        <Alert 
+          severity="info" 
+          sx={{ 
+            mb: 3,
+            borderLeft: '4px solid #2196f3',
+            backgroundColor: 'rgba(33, 150, 243, 0.1)',
+            '& .MuiAlert-icon': {
+              color: '#2196f3'
+            }
+          }}
+        >
+          <Typography variant="body2">
+            <strong>Beta Version:</strong> This application is currently in beta. Some features may not be fully functional or working as expected. Thank you for your patience!
+          </Typography>
+        </Alert>
+
         {/* Header Section */}
         <Box 
           sx={{ 

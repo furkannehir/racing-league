@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import {
   Box,
   Container,
@@ -58,7 +58,6 @@ const Login: React.FC = () => {
 
   // Auth context
   const { login, signup, googleLogin, isAuthenticated, loading, error } = useAuth();
-  const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -93,7 +92,8 @@ const Login: React.FC = () => {
     try {
       if (mode === 'login') {
         await login(email, password);
-        navigate('/');
+        // Use window.location for a hard navigation to ensure state is updated
+        window.location.href = '/dashboard';
       } else {
         await signup(name, email, password);
         setMessage('Registration successful! Please check your email to verify your account.');
@@ -128,7 +128,7 @@ const Login: React.FC = () => {
   const handleGoogleLogin = async () => {
     try {
       await googleLogin();
-      navigate('/');
+      window.location.href = '/dashboard';
     } catch (err) {
       // Error is handled by useAuth
     }
