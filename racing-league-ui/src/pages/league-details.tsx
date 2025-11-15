@@ -384,21 +384,47 @@ const LeagueDetails: React.FC = () => {
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {completedRaces.map((race, index) => (
-                              <TableRow key={index}>
-                                <TableCell>{race.track}</TableCell>
-                                <TableCell>{race.date}</TableCell>
-                                <TableCell>
-                                  {/* Winner would need to be determined from standings data */}
-                                  {league.standings.races[race.track] ? 
-                                    Object.entries(league.standings.races[race.track])
-                                      .find(([_, result]) => result.position === 1)?.[0] || 'Unknown' : 
-                                    'No results'
-                                  }
-                                </TableCell>
-                                <TableCell>{race.status}</TableCell>
-                              </TableRow>
-                            ))}
+                            {completedRaces.map((race, index) => {
+                              // Find winner from race results using race._id
+                              const raceId = race._id;
+                              const winnerEntry = league.standings.races[raceId] ? 
+                                Object.entries(league.standings.races[raceId])
+                                  .find(([_, result]) => result.position === 1) : 
+                                null;
+                              
+                              const winnerId = winnerEntry?.[0] || null;
+                              let winnerName = 'Unknown';
+                              
+                              if (winnerId) {
+                                // Try to get name from overall standings first
+                                winnerName = standings[winnerId]?.name || 
+                                  (() => {
+                                    // Fall back to searching participants
+                                    const participant = Array.isArray(league.participants) 
+                                      ? league.participants.find((p: any) => {
+                                          const pId = typeof p === 'string' ? p : p.email || p._id;
+                                          return pId === winnerId;
+                                        })
+                                      : null;
+                                    if (participant) {
+                                      if (typeof participant === 'string') return participant;
+                                      return (participant as any).name || (participant as any).email || winnerId;
+                                    }
+                                    return winnerId;
+                                  })();
+                              } else if (!league.standings.races[raceId]) {
+                                winnerName = 'No results';
+                              }
+                              
+                              return (
+                                <TableRow key={index}>
+                                  <TableCell>{race.track}</TableCell>
+                                  <TableCell>{race.date}</TableCell>
+                                  <TableCell>{winnerName}</TableCell>
+                                  <TableCell>{race.status}</TableCell>
+                                </TableRow>
+                              );
+                            })}
                           </TableBody>
                         </Table>
                       ) : (
@@ -439,20 +465,38 @@ const LeagueDetails: React.FC = () => {
                             {Object.entries(standings)
                               .sort(([,a], [,b]) => (b.points - a.points))
                               .slice(0, 5)
-                              .map(([driverId, stats], index) => (
-                                <TableRow key={driverId}>
-                                  <TableCell>
-                                    <Chip 
-                                      label={`#${index + 1}`} 
-                                      color={index === 0 ? 'success' : 'default'} 
-                                      size="small" 
-                                    />
-                                  </TableCell>
-                                  <TableCell>{stats.name || driverId}</TableCell>
-                                  <TableCell>{stats.points}</TableCell>
-                                  <TableCell>{stats.wins}</TableCell>
-                                </TableRow>
-                              ))}
+                              .map(([driverId, stats], index) => {
+                                // Get driver name from standings or find from participants
+                                const driverName = stats.name || 
+                                  (() => {
+                                    const participant = Array.isArray(league.participants) 
+                                      ? league.participants.find((p: any) => {
+                                          const pId = typeof p === 'string' ? p : p.email || p._id;
+                                          return pId === driverId;
+                                        })
+                                      : null;
+                                    if (participant) {
+                                      if (typeof participant === 'string') return participant;
+                                      return (participant as any).name || (participant as any).email || driverId;
+                                    }
+                                    return driverId;
+                                  })();
+                                
+                                return (
+                                  <TableRow key={driverId}>
+                                    <TableCell>
+                                      <Chip 
+                                        label={`#${index + 1}`} 
+                                        color={index === 0 ? 'success' : 'default'} 
+                                        size="small" 
+                                      />
+                                    </TableCell>
+                                    <TableCell>{driverName}</TableCell>
+                                    <TableCell>{stats.points}</TableCell>
+                                    <TableCell>{stats.wins}</TableCell>
+                                  </TableRow>
+                                );
+                              })}
                           </TableBody>
                         </Table>
                       ) : (
@@ -547,23 +591,41 @@ const LeagueDetails: React.FC = () => {
                     <TableBody>
                       {Object.entries(standings)
                         .sort(([,a], [,b]) => (b.points - a.points))
-                        .map(([driverId, stats], index) => (
-                          <TableRow key={driverId}>
-                            <TableCell>
-                              <Chip 
-                                label={`#${index + 1}`} 
-                                color={index === 0 ? 'success' : 'default'}
-                                size="small" 
-                              />
-                            </TableCell>
-                            <TableCell>{stats.name || driverId}</TableCell>
-                            <TableCell align="center">{stats.points}</TableCell>
-                            <TableCell align="center">{stats.wins}</TableCell>
-                            <TableCell align="center">{stats.podiums}</TableCell>
-                            <TableCell align="center">{stats.dnfs}</TableCell>
-                            <TableCell align="center">{stats.fastestLaps}</TableCell>
-                          </TableRow>
-                        ))}
+                        .map(([driverId, stats], index) => {
+                          // Get driver name from standings or find from participants
+                          const driverName = stats.name || 
+                            (() => {
+                              const participant = Array.isArray(league.participants) 
+                                ? league.participants.find((p: any) => {
+                                    const pId = typeof p === 'string' ? p : p.email || p._id;
+                                    return pId === driverId;
+                                  })
+                                : null;
+                              if (participant) {
+                                if (typeof participant === 'string') return participant;
+                                return (participant as any).name || (participant as any).email || driverId;
+                              }
+                              return driverId;
+                            })();
+                          
+                          return (
+                            <TableRow key={driverId}>
+                              <TableCell>
+                                <Chip 
+                                  label={`#${index + 1}`} 
+                                  color={index === 0 ? 'success' : 'default'}
+                                  size="small" 
+                                />
+                              </TableCell>
+                              <TableCell>{driverName}</TableCell>
+                              <TableCell align="center">{stats.points}</TableCell>
+                              <TableCell align="center">{stats.wins}</TableCell>
+                              <TableCell align="center">{stats.podiums}</TableCell>
+                              <TableCell align="center">{stats.dnfs}</TableCell>
+                              <TableCell align="center">{stats.fastestLaps}</TableCell>
+                            </TableRow>
+                          );
+                        })}
                     </TableBody>
                   </Table>
                 ) : (
