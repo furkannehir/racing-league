@@ -3,6 +3,7 @@ from src.invite_module.invite import Invite
 from src.auth_module.auth_service import AuthService
 from firebase_admin import auth
 from src.user_module.user import User
+from src.email_module.email_service import EmailService
 
 class InviteService:
 
@@ -15,6 +16,7 @@ class InviteService:
         uid = AuthService.get_current_user()
         user = auth.get_user(uid)
         inviter = User.get_user_by_mail(user.email)
+        invitee = User.get_user_by_mail(email)
 
         if not inviter:
             raise Exception("User not found")
@@ -33,6 +35,15 @@ class InviteService:
             status="pending"
         )
         invite.save()
+        EmailService.send_custom_email(
+            to_email=email,
+            name=invitee.name if invitee else email,
+            subject="You're invited to join a league!",
+            message_top="You have been invited to join a league. Log in to your account to accept or decline the invitation. If you're not registered yet, you can sign up to join the league.",
+            message_bottom= 'If you have any questions, feel free to reach out to us.',
+            button_name="View Invitation",
+            url="https://yourapp.com/invites"
+        )
         return invite
 
     @staticmethod

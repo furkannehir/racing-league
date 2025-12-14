@@ -69,3 +69,20 @@ class EmailService:
             template_id=template_id,
             variables=variables
         )
+
+    @staticmethod
+    def send_custom_email(to_email: str, name: str, subject: str, message_top: str, message_bottom: str, button_name: str, url: str):
+        template_id = Config.EMAIL_TEMPLATE_ID
+        variables = {
+            "name": name,
+            "url": url,
+            "message_top": message_top,
+            "message_bottom": message_bottom,
+            "button_name": button_name
+        }
+        EmailService.send_email(
+            to_email=EmailContact(email=to_email, name=name),
+            subject=subject,
+            template_id=template_id,
+            variables=variables
+        )
