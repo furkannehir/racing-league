@@ -37,7 +37,7 @@ def get_my_leagues():
 @login_required
 def create_league():
     data = request.json
-    if not data.get('name') or not data.get('public') or not data.get('pointSystem') or not data.get('fastestLapPoint'):
+    if data.get('name') is None or data.get('public') is None or data.get('pointSystem') is None or data.get('fastestLapPoint') is None:
         return jsonify({"message": "Missing required fields"}), 400
     if not data.get('calendar'):
         data['calendar'] = []
