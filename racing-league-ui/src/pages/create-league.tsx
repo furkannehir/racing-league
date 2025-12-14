@@ -714,18 +714,48 @@ const CreateLeague: React.FC = () => {
                 </Box>
                 
                 <Typography variant="subtitle2" color="text.secondary">Invitations</Typography>
-                <Typography variant="body1" sx={{ mb: 2 }}>
-                  {formValues.invites.length > 0 
-                    ? `${formValues.invites.length} players will be invited` 
-                    : 'No invitations (you can invite players later)'}
-                </Typography>
+                {formValues.invites.length > 0 ? (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+                    {formValues.invites.map((email) => (
+                      <Chip
+                        key={email}
+                        label={email}
+                      />
+                    ))}
+                  </Box>
+                ) : (
+                  <Alert severity="info">
+                    No invitations added yet. You can still create the league and invite people later.
+                  </Alert>
+                )}
               </Grid>
             </Grid>
             
             {/* Calendar summary - no changes needed */}
             <Divider sx={{ my: 2 }} />
             <Typography variant="subtitle2" color="text.secondary">Race Calendar</Typography>
-            {/* ... existing calendar table code ... */}
+            {formValues.calendar.length > 0 ? (
+              <Box sx={{ mt: 1 }}>
+                {formValues.calendar
+                  .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                  .map((race, index) => (
+                  <Box 
+                    key={index}
+                    sx={{ display: 'flex', 
+                    justifyContent: 'space-between', 
+                    py: 0.5,
+                    borderBottom: index < formValues.calendar.length - 1 ? '1px solid' : 'none',
+                    borderColor: 'divider' }}
+                  >
+                    <Typography>{race.track}</Typography>
+                    <Typography>{new Date(race.date).toLocaleDateString()}</Typography>
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Typography sx={{ mt: 1 }}>No races added to the calendar.</Typography>
+            )}
+            
           </Paper>
           
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -747,6 +777,7 @@ const CreateLeague: React.FC = () => {
       sx={{ 
         backgroundColor: 'background.default',
         minHeight: '100vh',
+        minWidth: '100vw',
         pt: 4,
         pb: 8,
       }}
