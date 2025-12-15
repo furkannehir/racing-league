@@ -297,7 +297,10 @@ class League:
 
     @staticmethod
     def get_all_leagues():
-        leagues = db.leagues.find()
+        leagues = db.leagues.find({
+            "deleted_at": None,
+            "public": True
+        })
         return [League._create_league_from_document(league) for league in leagues]
     
     @staticmethod
