@@ -189,3 +189,83 @@ def get_participant_standings(league_id, participant_email):
         return jsonify(standings), 200
     except Exception as e:
         return jsonify({"message": str(e)}), 400
+
+
+@league_blueprint.route('/<league_id>/teams', methods=['POST', 'PUT'])
+@login_required
+def set_teams(league_id):
+    """
+    Create or update teams for a league
+    
+    Request body:
+    {
+        "Team Name": ["email1@example.com", "email2@example.com"],
+        "Another Team": ["email3@example.com"]
+    }
+    """
+    try:
+        uid = AuthService.get_current_user()
+        user = auth.get_user(uid)
+        league = LeagueService.get_league_by_id(league_id)
+        
+        if not league:
+            return jsonify({"message": "League not found"}), 404
+        
+        if user.email != league.owner and user.email not in league.admins:
+            return jsonify({"message": "Not authorized to manage teams"}), 403
+        
+        data = request.json
+        if not data or not isinstance(data, dict):
+            return jsonify({"message": "Invalid teams format. Expected object with team names as keys"}), 400
+        
+        teams = LeagueService.set_teams(league_id, data)
+        return jsonify(teams), 200
+    
+    except ValueError as e:
+        return jsonify({"message": str(e)}), 400
+    except Exception as e:
+        return jsonify({"message": str(e)}), 400
+
+
+@league_blueprint.route('/<league_id>/teams', methods=['GET'])
+@login_required
+def get_teams(league_id):
+    """Get all teams with calculated statistics"""
+    try:
+        teams = LeagueService.get_teams(league_id)
+        return jsonify(teams), 200
+    except Exception as e:
+        return jsonify({"message": str(e)}), 400
+
+
+@league_blueprint.route('/<league_id>/teams/standings', methods=['GET'])
+@login_required
+def get_team_standings(league_id):
+    """Get teams sorted by total points (leaderboard)"""
+    try:
+        standings = LeagueService.get_team_standings(league_id)
+        return jsonify(standings), 200
+    except Exception as e:
+        return jsonify({"message": str(e)}), 400
+
+
+@league_blueprint.route('/<league_id>/teams/<team_name>', methods=['DELETE'])
+@login_required
+def remove_team(league_id, team_name):
+    """Remove a team from the league"""
+    try:
+        uid = AuthService.get_current_user()
+        user = auth.get_user(uid)
+        league = LeagueService.get_league_by_id(league_id)
+        
+        if not league:
+            return jsonify({"message": "League not found"}), 404
+        
+        if user.email != league.owner and user.email not in league.admins:
+            return jsonify({"message": "Not authorized to manage teams"}), 403
+        
+        result = LeagueService.remove_team(league_id, team_name)
+        return jsonify(result), 200
+    
+    except Exception as e:
+        return jsonify({"message": str(e)}), 400

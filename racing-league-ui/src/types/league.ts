@@ -65,3 +65,43 @@ export interface LeagueInvite {
     createdAt: string;
     status: 'pending' | 'accepted' | 'declined';
   }
+
+export interface TeamMemberDetails {
+  email: string;
+  name: string;
+  points: number;
+  wins: number;
+  podiums: number;
+  dnfs: number;
+  fastestLaps: number;
+}
+
+export interface TeamStats {
+  members: string[];
+  total_points: number;
+  total_wins: number;
+  total_podiums: number;
+  total_dnfs: number;
+  total_fastest_laps: number;
+  member_details: TeamMemberDetails[];
+}
+
+export interface TeamsWithStats {
+  [teamName: string]: TeamStats;
+}
+
+export interface TeamStanding {
+  name: string;
+  position: number;
+  members: string[];
+  total_points: number;
+  total_wins: number;
+  total_podiums: number;
+  total_dnfs: number;
+  total_fastest_laps: number;
+  member_details: TeamMemberDetails[];
+}
+
+export interface TeamsConfig {
+  [teamName: string]: string[];
+}

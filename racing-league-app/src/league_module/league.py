@@ -5,7 +5,7 @@ from src.league_module.race import Race
 from src.user_module.user import User
 
 class League:
-    def __init__(self, name, owner, public, calendar, pointSystem, status, max_players=20, fastestLapPoint=0, _id=None, standings={}, participants=[], admins=[], created_at=None, updated_at=None, deleted_at=None):
+    def __init__(self, name, owner, public, calendar, pointSystem, status, max_players=20, fastestLapPoint=0, _id=None, standings={}, participants=[], admins=[], created_at=None, updated_at=None, deleted_at=None, teams=None):
         self._id = _id
         self.admins = admins
         self.calendar = calendar
@@ -23,6 +23,12 @@ class League:
         self.participantsCount = len(participants)
         self.next_race = self.get_next_race()
         self.status = status
+        self.teams = teams if teams else {}
+        # Teams structure stored in DB:
+        # {
+        #     "Red Bull": ["email1@example.com", "email2@example.com"],
+        #     "Ferrari": ["email3@example.com"]
+        # }
 
     def get_next_race(self):
         """Find the next upcoming race in the calendar"""
@@ -98,6 +104,7 @@ class League:
             "next_race": next_race_serialized,
             "status": self.status,
             "admins": self.admins,
+            "teams": self.get_teams(),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted_at": self.deleted_at
@@ -153,7 +160,8 @@ class League:
                     "updated_at": self.updated_at,
                     "participants": self.participants,
                     "admins": self.admins,
-                    "standings": self.standings
+                    "standings": self.standings,
+                    "teams": self.teams
                 }}
             )
         else:
@@ -170,6 +178,7 @@ class League:
                 "participants": self.participants,
                 "admins": self.admins,
                 "status": self.status,
+                "teams": self.teams,
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
                 "deleted_at": self.deleted_at,
@@ -372,6 +381,162 @@ class League:
                 {"$pull": {"participants": participant_id}}
             )
 
+    def set_teams(self, teams_config):
+        """
+        Create/update teams from a configuration dictionary
+        
+        Args:
+            teams_config: Dict mapping team names to member email lists
+                         Format: {"Team Name": ["email1@example.com", "email2@example.com"]}
+        
+        Returns:
+            The updated teams dictionary
+        
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate all teams
+        all_assigned_members = []
+        
+        for team_name, members in teams_config.items():
+            if not team_name or not isinstance(team_name, str):
+                raise ValueError("Team name must be a non-empty string")
+            
+            if not members or not isinstance(members, list):
+                raise ValueError(f"Team '{team_name}' must have a list of members")
+            
+            if len(members) < 1 or len(members) > 3:
+                raise ValueError(f"Team '{team_name}' must have 1-3 members, got {len(members)}")
+            
+            # Validate all members are participants
+            for member in members:
+                if member not in self.participants:
+                    raise ValueError(f"Member '{member}' in team '{team_name}' is not a league participant")
+                
+                # Check for duplicate assignments
+                if member in all_assigned_members:
+                    raise ValueError(f"Member '{member}' is assigned to multiple teams")
+                all_assigned_members.append(member)
+        
+        # All validations passed, update teams
+        self.teams = teams_config
+        
+        # Save to database
+        db.leagues.update_one(
+            {"_id": self._id},
+            {"$set": {"teams": self.teams}}
+        )
+        
+        return self.teams
+
+    def get_teams(self):
+        """
+        Get all teams with calculated total points from member standings
+        
+        Returns:
+            Dict with team details and aggregated statistics
+            Format: {
+                "Team Name": {
+                    "members": ["email1", "email2"],
+                    "total_points": 150,
+                    "total_wins": 3,
+                    "total_podiums": 5,
+                    "total_dnfs": 1,
+                    "total_fastest_laps": 2,
+                    "member_details": [
+                        {"email": "email1", "name": "John", "points": 100, ...},
+                        {"email": "email2", "name": "Jane", "points": 50, ...}
+                    ]
+                }
+            }
+        """
+        teams_with_stats = {}
+        overall_standings = self.standings.get("overall", {})
+        
+        for team_name, members in self.teams.items():
+            team_stats = {
+                "members": members,
+                "total_points": 0,
+                "total_wins": 0,
+                "total_podiums": 0,
+                "total_dnfs": 0,
+                "total_fastest_laps": 0,
+                "member_details": []
+            }
+            
+            for member_email in members:
+                # Get member's standings
+                member_standings = overall_standings.get(member_email, {
+                    "points": 0,
+                    "wins": 0,
+                    "podiums": 0,
+                    "dnfs": 0,
+                    "fastestLaps": 0
+                })
+                
+                # Get member's name
+                user = User.get_user_by_mail(member_email)
+                member_name = user.name if user else member_email
+                
+                # Aggregate team totals
+                team_stats["total_points"] += member_standings.get("points", 0)
+                team_stats["total_wins"] += member_standings.get("wins", 0)
+                team_stats["total_podiums"] += member_standings.get("podiums", 0)
+                team_stats["total_dnfs"] += member_standings.get("dnfs", 0)
+                team_stats["total_fastest_laps"] += member_standings.get("fastestLaps", 0)
+                
+                # Add member details
+                team_stats["member_details"].append({
+                    "email": member_email,
+                    "name": member_name,
+                    "points": member_standings.get("points", 0),
+                    "wins": member_standings.get("wins", 0),
+                    "podiums": member_standings.get("podiums", 0),
+                    "dnfs": member_standings.get("dnfs", 0),
+                    "fastestLaps": member_standings.get("fastestLaps", 0)
+                })
+            
+            teams_with_stats[team_name] = team_stats
+        
+        return teams_with_stats
+
+    def get_team_standings(self):
+        """
+        Get teams sorted by total points (for leaderboard)
+        
+        Returns:
+            List of teams sorted by total_points descending
+        """
+        teams_with_stats = self.get_teams()
+        
+        sorted_teams = sorted(
+            [{"name": name, **stats} for name, stats in teams_with_stats.items()],
+            key=lambda x: (x["total_points"], x["total_wins"], x["total_podiums"]),
+            reverse=True
+        )
+        
+        # Add position
+        for i, team in enumerate(sorted_teams):
+            team["position"] = i + 1
+        
+        return sorted_teams
+
+    def get_participant_team(self, participant_email):
+        """Get the team name a participant belongs to"""
+        for team_name, members in self.teams.items():
+            if participant_email in members:
+                return team_name
+        return None
+
+    def remove_team(self, team_name):
+        """Remove a team by name"""
+        if team_name in self.teams:
+            del self.teams[team_name]
+            db.leagues.update_one(
+                {"_id": self._id},
+                {"$unset": {f"teams.{team_name}": ""}}
+            )
+
     @staticmethod
     def _create_league_from_document(league_data):
         # Convert stored calendar data back to Race objects
@@ -395,5 +560,6 @@ class League:
             admins=league_data.get('admins', []),
             created_at=league_data.get('created_at', datetime.now(timezone.utc)),
             updated_at=league_data.get('updated_at'),
-            deleted_at=league_data.get('deleted_at')
+            deleted_at=league_data.get('deleted_at'),
+            teams=league_data.get('teams', {})
         )

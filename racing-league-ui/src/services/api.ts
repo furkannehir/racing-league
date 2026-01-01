@@ -1,5 +1,5 @@
 import axios, { AxiosResponse, AxiosError } from 'axios';
-import { League, LeagueInvite } from '../types/league';
+import { League, LeagueInvite, TeamsWithStats, TeamStanding, TeamsConfig } from '../types/league';
 import config from '../config/config';
 
 // Create an axios instance with appropriate configuration
@@ -428,6 +428,57 @@ export const verification_email = async (email: string): Promise<void> => {
     await api.post('/v1/auth/verification-email', { email });
   } catch (error) {
     console.error('Error requesting email verification:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get teams with calculated statistics for a league
+ */
+export const fetchLeagueTeams = async (leagueId: string): Promise<TeamsWithStats> => {
+  try {
+    const response = await api.get<TeamsWithStats>(`/v1/leagues/${leagueId}/teams`);
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching teams for league ${leagueId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Get team standings (sorted by points) for a league
+ */
+export const fetchTeamStandings = async (leagueId: string): Promise<TeamStanding[]> => {
+  try {
+    const response = await api.get<TeamStanding[]>(`/v1/leagues/${leagueId}/teams/standings`);
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching team standings for league ${leagueId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Create or update teams for a league
+ */
+export const setLeagueTeams = async (leagueId: string, teamsConfig: TeamsConfig): Promise<TeamsWithStats> => {
+  try {
+    const response = await api.post<TeamsWithStats>(`/v1/leagues/${leagueId}/teams`, teamsConfig);
+    return response.data;
+  } catch (error) {
+    console.error(`Error setting teams for league ${leagueId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Remove a team from a league
+ */
+export const removeLeagueTeam = async (leagueId: string, teamName: string): Promise<void> => {
+  try {
+    await api.delete(`/v1/leagues/${leagueId}/teams/${encodeURIComponent(teamName)}`);
+  } catch (error) {
+    console.error(`Error removing team ${teamName} from league ${leagueId}:`, error);
     throw error;
   }
 };

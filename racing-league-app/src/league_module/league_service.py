@@ -190,6 +190,57 @@ class LeagueService:
         return league.get_participant_standings(participant_email)
 
     @staticmethod
+    def set_teams(league_id, teams_config):
+        """
+        Create or update teams for a league
+        
+        Args:
+            league_id: The ID of the league
+            teams_config: Dict mapping team names to member email lists
+                         Format: {"Team Name": ["email1@example.com", "email2@example.com"]}
+        
+        Returns:
+            The updated teams dictionary with calculated stats
+        """
+        league = League.get_league_by_id(league_id)
+        if not league:
+            raise Exception("League not found")
+        
+        league.set_teams(teams_config)
+        return league.get_teams()
+
+    @staticmethod
+    def get_teams(league_id):
+        """Get all teams with calculated statistics for a league"""
+        league = League.get_league_by_id(league_id)
+        if not league:
+            raise Exception("League not found")
+        
+        return league.get_teams()
+
+    @staticmethod
+    def get_team_standings(league_id):
+        """Get teams sorted by total points for a league"""
+        league = League.get_league_by_id(league_id)
+        if not league:
+            raise Exception("League not found")
+        
+        return league.get_team_standings()
+
+    @staticmethod
+    def remove_team(league_id, team_name):
+        """Remove a team from a league"""
+        league = League.get_league_by_id(league_id)
+        if not league:
+            raise Exception("League not found")
+        
+        if team_name not in league.teams:
+            raise Exception("Team not found")
+        
+        league.remove_team(team_name)
+        return {"message": f"Team '{team_name}' removed successfully"}
+
+    @staticmethod
     def extract_race_results(image_files):
         # Save temp files and create OpenAI image URL objects
         image_data = []

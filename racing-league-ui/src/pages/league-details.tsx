@@ -43,10 +43,12 @@ import {
   MoreVert as MoreVertIcon,
   Email as EmailIcon,
   ExitToApp as ExitIcon,
+  Groups as GroupsIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
-import { fetchLeagueById, leaveLeague } from '../services/api';
-import { League, RaceDetails } from '../types/league';
+import { fetchLeagueById, leaveLeague, fetchLeagueTeams, setLeagueTeams, removeLeagueTeam } from '../services/api';
+import { League, RaceDetails, TeamsWithStats, TeamsConfig } from '../types/league';
 import SubmitRaceResultsDialog from '../components/submit-race-results';
 import InvitePlayersDialog from '../components/invite-players-dialog';
 
@@ -94,6 +96,14 @@ const LeagueDetails: React.FC = () => {
   const [selectedRace, setSelectedRace] = useState<RaceDetails | null>(null);
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   
+  // Teams state
+  const [teams, setTeams] = useState<TeamsWithStats>({});
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [editTeamsDialogOpen, setEditTeamsDialogOpen] = useState(false);
+  const [editingTeams, setEditingTeams] = useState<TeamsConfig>({});
+  const [newTeamName, setNewTeamName] = useState('');
+  const [teamError, setTeamError] = useState<string | null>(null);
+  
   // Derived state - check if user is admin or owner
   const isAdmin = league?.admins?.includes(user?.email || '') || league?.owner === user?.email;
   const isOwner = league?.owner === user?.email;
@@ -108,6 +118,15 @@ const LeagueDetails: React.FC = () => {
         setError(null);
         const data = await fetchLeagueById(leagueId);
         setLeague(data);
+        
+        // Fetch teams data
+        try {
+          const teamsData = await fetchLeagueTeams(leagueId);
+          setTeams(teamsData);
+        } catch (teamsErr) {
+          console.error('Error fetching teams:', teamsErr);
+          // Don't fail the whole page if teams fail to load
+        }
       } catch (err) {
         setError('Unable to load league details. Please try again.');
         console.error('Error fetching league details:', err);
@@ -138,6 +157,119 @@ const LeagueDetails: React.FC = () => {
 
   const handleInvitesSent = () => {
     setInviteDialogOpen(false);
+  };
+
+  // Team management functions
+  const handleOpenEditTeamsDialog = () => {
+    // Convert current teams to editable format
+    const currentTeamsConfig: TeamsConfig = {};
+    Object.entries(teams).forEach(([teamName, teamData]) => {
+      currentTeamsConfig[teamName] = teamData.members;
+    });
+    setEditingTeams(currentTeamsConfig);
+    setTeamError(null);
+    setEditTeamsDialogOpen(true);
+  };
+
+  const handleAddTeam = () => {
+    if (!newTeamName.trim()) return;
+    if (editingTeams[newTeamName.trim()]) {
+      setTeamError('Team name already exists');
+      return;
+    }
+    setEditingTeams(prev => ({
+      ...prev,
+      [newTeamName.trim()]: []
+    }));
+    setNewTeamName('');
+    setTeamError(null);
+  };
+
+  const handleRemoveTeamFromEdit = (teamName: string) => {
+    setEditingTeams(prev => {
+      const updated = { ...prev };
+      delete updated[teamName];
+      return updated;
+    });
+  };
+
+  const handleToggleMemberInTeam = (teamName: string, memberEmail: string) => {
+    setEditingTeams(prev => {
+      const teamMembers = prev[teamName] || [];
+      const isInTeam = teamMembers.includes(memberEmail);
+      
+      if (isInTeam) {
+        // Remove from team
+        return {
+          ...prev,
+          [teamName]: teamMembers.filter(m => m !== memberEmail)
+        };
+      } else {
+        // Check if member is in another team
+        for (const [otherTeam, members] of Object.entries(prev)) {
+          if (otherTeam !== teamName && members.includes(memberEmail)) {
+            setTeamError(`${memberEmail} is already in team "${otherTeam}"`);
+            return prev;
+          }
+        }
+        // Check max 3 members
+        if (teamMembers.length >= 3) {
+          setTeamError('Teams can have maximum 3 members');
+          return prev;
+        }
+        // Add to team
+        return {
+          ...prev,
+          [teamName]: [...teamMembers, memberEmail]
+        };
+      }
+    });
+    setTeamError(null);
+  };
+
+  const handleSaveTeams = async () => {
+    if (!leagueId) return;
+    
+    // Validate teams
+    for (const [teamName, members] of Object.entries(editingTeams)) {
+      if (members.length < 1) {
+        setTeamError(`Team "${teamName}" must have at least 1 member`);
+        return;
+      }
+      if (members.length > 3) {
+        setTeamError(`Team "${teamName}" can have maximum 3 members`);
+        return;
+      }
+    }
+    
+    try {
+      setTeamsLoading(true);
+      const updatedTeams = await setLeagueTeams(leagueId, editingTeams);
+      setTeams(updatedTeams);
+      setEditTeamsDialogOpen(false);
+      setTeamError(null);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to save teams';
+      setTeamError(errorMessage);
+    } finally {
+      setTeamsLoading(false);
+    }
+  };
+
+  const handleDeleteTeam = async (teamName: string) => {
+    if (!leagueId) return;
+    
+    try {
+      await removeLeagueTeam(leagueId, teamName);
+      setTeams(prev => {
+        const updated = { ...prev };
+        delete updated[teamName];
+        return updated;
+      });
+    } catch (err) {
+      console.error('Error deleting team:', err);
+    }
   };
 
   // Handle tab change
@@ -355,6 +487,7 @@ const LeagueDetails: React.FC = () => {
             >
               <Tab label="Overview" icon={<TrophyIcon />} iconPosition="start" />
               <Tab label="Standings" icon={<FlagIcon />} iconPosition="start" />
+              <Tab label="Teams" icon={<GroupsIcon />} iconPosition="start" />
               <Tab label="Calendar" icon={<CalendarIcon />} iconPosition="start" />
               {isAdmin && <Tab label="Settings" icon={<SettingsIcon />} iconPosition="start" />}
             </Tabs>
@@ -642,8 +775,115 @@ const LeagueDetails: React.FC = () => {
             </Box>
           </TabPanel>
           
-          {/* Calendar Tab */}
+          {/* Teams Tab */}
           <TabPanel value={activeTab} index={2}>
+            <Box sx={{ p: 3 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h5">Team Standings</Typography>
+                {isAdmin && (
+                  <Button 
+                    variant="contained" 
+                    color="primary"
+                    startIcon={<EditIcon />}
+                    onClick={handleOpenEditTeamsDialog}
+                  >
+                    Manage Teams
+                  </Button>
+                )}
+              </Box>
+              <Divider sx={{ mb: 3 }} />
+              
+              {Object.keys(teams).length > 0 ? (
+                <Grid container spacing={3}>
+                  {Object.entries(teams)
+                    .sort(([,a], [,b]) => b.total_points - a.total_points)
+                    .map(([teamName, teamData], index) => (
+                      <Grid item xs={12} md={6} lg={4} key={teamName}>
+                        <Card sx={{ bgcolor: 'rgba(0,0,0,0.2)', height: '100%' }}>
+                          <CardContent>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Chip 
+                                  label={`#${index + 1}`} 
+                                  color={index === 0 ? 'success' : index === 1 ? 'primary' : index === 2 ? 'warning' : 'default'}
+                                  size="small"
+                                />
+                                <Typography variant="h6">{teamName}</Typography>
+                              </Box>
+                              {isAdmin && (
+                                <IconButton 
+                                  size="small" 
+                                  color="error"
+                                  onClick={() => handleDeleteTeam(teamName)}
+                                >
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              )}
+                            </Box>
+                            
+                            <Box sx={{ display: 'flex', justifyContent: 'space-around', mb: 2, py: 1, bgcolor: 'rgba(255,255,255,0.05)', borderRadius: 1 }}>
+                              <Box sx={{ textAlign: 'center' }}>
+                                <Typography variant="h5" color="primary">{teamData.total_points}</Typography>
+                                <Typography variant="caption" color="text.secondary">Points</Typography>
+                              </Box>
+                              <Box sx={{ textAlign: 'center' }}>
+                                <Typography variant="h5">{teamData.total_wins}</Typography>
+                                <Typography variant="caption" color="text.secondary">Wins</Typography>
+                              </Box>
+                              <Box sx={{ textAlign: 'center' }}>
+                                <Typography variant="h5">{teamData.total_podiums}</Typography>
+                                <Typography variant="caption" color="text.secondary">Podiums</Typography>
+                              </Box>
+                            </Box>
+                            
+                            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                              Team Members
+                            </Typography>
+                            <TableContainer>
+                              <Table size="small">
+                                <TableBody>
+                                  {teamData.member_details.map((member) => (
+                                    <TableRow key={member.email}>
+                                      <TableCell sx={{ border: 0, py: 0.5 }}>{member.name}</TableCell>
+                                      <TableCell sx={{ border: 0, py: 0.5 }} align="right">
+                                        <Chip label={`${member.points} pts`} size="small" variant="outlined" />
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ))}
+                </Grid>
+              ) : (
+                <Paper sx={{ p: 4, textAlign: 'center', bgcolor: 'rgba(0,0,0,0.2)' }}>
+                  <GroupsIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
+                  <Typography variant="h6" color="text.secondary" gutterBottom>
+                    No Teams Created
+                  </Typography>
+                  <Typography color="text.secondary" paragraph>
+                    Teams haven't been set up for this league yet.
+                  </Typography>
+                  {isAdmin && (
+                    <Button 
+                      variant="contained" 
+                      color="primary"
+                      startIcon={<AddIcon />}
+                      onClick={handleOpenEditTeamsDialog}
+                    >
+                      Create Teams
+                    </Button>
+                  )}
+                </Paper>
+              )}
+            </Box>
+          </TabPanel>
+          
+          {/* Calendar Tab */}
+          <TabPanel value={activeTab} index={3}>
             <Box sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5">Race Calendar</Typography>
@@ -728,7 +968,7 @@ const LeagueDetails: React.FC = () => {
           
           {/* Settings Tab (Admin Only) */}
           {isAdmin && (
-            <TabPanel value={activeTab} index={3}>
+            <TabPanel value={activeTab} index={4}>
               <Box sx={{ p: 3 }}>
                 <Typography variant="h5" gutterBottom>League Settings</Typography>
                 <Divider sx={{ mb: 3 }} />
@@ -839,6 +1079,114 @@ const LeagueDetails: React.FC = () => {
         onClose={() => setInviteDialogOpen(false)}
         onInvitesSent={handleInvitesSent}
       />
+      
+      {/* Edit Teams Dialog */}
+      <Dialog
+        open={editTeamsDialogOpen}
+        onClose={() => setEditTeamsDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>Manage Teams</DialogTitle>
+        <DialogContent>
+          {teamError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {teamError}
+            </Alert>
+          )}
+          
+          {/* Add new team */}
+          <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+            <TextField
+              label="New Team Name"
+              value={newTeamName}
+              onChange={(e) => setNewTeamName(e.target.value)}
+              size="small"
+              fullWidth
+              onKeyPress={(e) => e.key === 'Enter' && handleAddTeam()}
+            />
+            <Button 
+              variant="contained" 
+              onClick={handleAddTeam}
+              disabled={!newTeamName.trim()}
+            >
+              Add Team
+            </Button>
+          </Box>
+          
+          <Divider sx={{ mb: 2 }} />
+          
+          {/* Teams list */}
+          {Object.keys(editingTeams).length > 0 ? (
+            <Grid container spacing={2}>
+              {Object.entries(editingTeams).map(([teamName, members]) => (
+                <Grid item xs={12} md={6} key={teamName}>
+                  <Paper sx={{ p: 2, bgcolor: 'rgba(0,0,0,0.1)' }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="subtitle1" fontWeight="bold">
+                        {teamName}
+                      </Typography>
+                      <IconButton 
+                        size="small" 
+                        color="error"
+                        onClick={() => handleRemoveTeamFromEdit(teamName)}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                    
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      Members ({members.length}/3) - Click to add/remove
+                    </Typography>
+                    
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {Array.isArray(league?.participants) && league.participants.map((participant: any) => {
+                        const email = typeof participant === 'string' ? participant : participant.email;
+                        const name = typeof participant === 'string' ? participant : (participant.name || participant.email);
+                        const isInThisTeam = members.includes(email);
+                        const isInOtherTeam = !isInThisTeam && Object.entries(editingTeams).some(
+                          ([otherTeam, otherMembers]) => otherTeam !== teamName && otherMembers.includes(email)
+                        );
+                        
+                        return (
+                          <Chip
+                            key={email}
+                            label={name}
+                            size="small"
+                            color={isInThisTeam ? 'primary' : 'default'}
+                            variant={isInThisTeam ? 'filled' : 'outlined'}
+                            onClick={() => handleToggleMemberInTeam(teamName, email)}
+                            disabled={isInOtherTeam}
+                            sx={{ 
+                              opacity: isInOtherTeam ? 0.5 : 1,
+                              cursor: isInOtherTeam ? 'not-allowed' : 'pointer'
+                            }}
+                          />
+                        );
+                      })}
+                    </Box>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+          ) : (
+            <Typography color="text.secondary" textAlign="center" py={3}>
+              No teams created yet. Add a team above to get started.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditTeamsDialogOpen(false)}>Cancel</Button>
+          <Button 
+            onClick={handleSaveTeams} 
+            variant="contained" 
+            color="primary"
+            disabled={teamsLoading || Object.keys(editingTeams).length === 0}
+          >
+            {teamsLoading ? <CircularProgress size={24} /> : 'Save Teams'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
