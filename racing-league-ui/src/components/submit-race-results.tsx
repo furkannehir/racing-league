@@ -50,7 +50,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { submitRaceResult, processRaceScreenshot, processMultipleRaceScreenshots } from '../services/api';
-import { League, RaceDetails } from '../types/league';
+import { League, RaceDetails, LeagueParticipant } from '../types/league';
 
 interface SubmitRaceResultsDialogProps {
   open: boolean;
@@ -245,10 +245,10 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
     if (open && selectedRace && league.participants) {
       // Initialize driver results when dialog opens
       const initialResults: DriverResult[] = Array.isArray(league.participants) 
-        ? league.participants.map((driver: any, index) => {
-            const driverId = typeof driver === 'string' ? driver : driver.email || driver._id;
-            const name = standings[driverId]?.name || 
-                        (typeof driver === 'string' ? driver : driver.name || driver.email || driverId);
+        ? league.participants.map((driver: LeagueParticipant, index) => {
+            const driverId = driver.email;
+            // Prioritize league_user_name over standings name
+            const name = driver.league_user_name || driver.name || standings[driverId]?.name || driver.email;
             return { 
               position: index + 1,
               fastestLap: false,

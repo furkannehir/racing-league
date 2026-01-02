@@ -23,6 +23,11 @@ import {
   Alert,
   Grid,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
 } from '@mui/material';
 import {
   Speed as SpeedIcon,
@@ -39,7 +44,7 @@ import { fetchMyLeagues, fetchMyInvites, acceptLeagueInvite, declineLeagueInvite
 import { League, LeagueInvite } from '../types/league';
 
 const MyLeagues: React.FC = () => {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const navigate = useNavigate();
   const [leagues, setLeagues] = useState<League[]>([]);
   const [invites, setInvites] = useState<LeagueInvite[]>([]);
@@ -47,6 +52,11 @@ const MyLeagues: React.FC = () => {
   const [isInvitesLoading, setIsInvitesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inviteActionLoading, setInviteActionLoading] = useState<string | null>(null);
+  
+  // Accept invite dialog state
+  const [acceptDialogOpen, setAcceptDialogOpen] = useState(false);
+  const [selectedInvite, setSelectedInvite] = useState<LeagueInvite | null>(null);
+  const [leagueUserName, setLeagueUserName] = useState('');
 
   useEffect(() => {
     const getLeagues = async () => {
@@ -82,15 +92,30 @@ const MyLeagues: React.FC = () => {
     }
   }, [isAuthenticated]);
 
-  const handleAcceptInvite = async (inviteId: string) => {
+  const handleOpenAcceptDialog = (invite: LeagueInvite) => {
+    setSelectedInvite(invite);
+    setLeagueUserName(user?.name || user?.email || '');
+    setAcceptDialogOpen(true);
+  };
+
+  const handleCloseAcceptDialog = () => {
+    setAcceptDialogOpen(false);
+    setSelectedInvite(null);
+    setLeagueUserName('');
+  };
+
+  const handleAcceptInvite = async () => {
+    if (!selectedInvite) return;
+    
     try {
-      setInviteActionLoading(inviteId);
-      await acceptLeagueInvite(inviteId);
+      setInviteActionLoading(selectedInvite._id);
+      await acceptLeagueInvite(selectedInvite._id, leagueUserName || undefined);
       
       // Remove from invites and refresh leagues
-      setInvites(invites.filter(invite => invite._id !== inviteId));
+      setInvites(invites.filter(invite => invite._id !== selectedInvite._id));
       const updatedLeagues = await fetchMyLeagues();
       setLeagues(updatedLeagues);
+      handleCloseAcceptDialog();
     } catch (err) {
       console.error('Error accepting invite:', err);
     } finally {
@@ -265,14 +290,10 @@ const MyLeagues: React.FC = () => {
                                 color="success"
                                 size="small"
                                 startIcon={<CheckIcon />}
-                                onClick={() => handleAcceptInvite(invite._id)}
+                                onClick={() => handleOpenAcceptDialog(invite)}
                                 disabled={inviteActionLoading === invite._id}
                               >
-                                {inviteActionLoading === invite._id ? (
-                                  <CircularProgress size={20} color="inherit" />
-                                ) : (
-                                  'Accept'
-                                )}
+                                Accept
                               </Button>
                             </span>
                           </Tooltip>
@@ -484,6 +505,52 @@ const MyLeagues: React.FC = () => {
             })()}
           </Box>
         )}
+
+        {/* Accept Invite Dialog */}
+        <Dialog 
+          open={acceptDialogOpen} 
+          onClose={handleCloseAcceptDialog}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{
+            sx: {
+              bgcolor: 'rgba(30,30,30,0.95)',
+              backgroundImage: 'linear-gradient(180deg, rgba(30,30,30,0.9) 0%, rgba(25,25,25,1) 100%)',
+            }
+          }}
+        >
+          <DialogTitle>
+            Join {selectedInvite?.league.name}
+          </DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              Choose your display name for this league. This is how other participants will see you in standings and race results.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              label="League Display Name"
+              value={leagueUserName}
+              onChange={(e) => setLeagueUserName(e.target.value)}
+              placeholder="Enter your display name"
+              helperText="You can use a different name for each league"
+            />
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={handleCloseAcceptDialog} disabled={inviteActionLoading === selectedInvite?._id}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleAcceptInvite}
+              variant="contained" 
+              color="success"
+              disabled={inviteActionLoading === selectedInvite?._id || !leagueUserName.trim()}
+              startIcon={inviteActionLoading === selectedInvite?._id ? <CircularProgress size={20} color="inherit" /> : <CheckIcon />}
+            >
+              {inviteActionLoading === selectedInvite?._id ? 'Joining...' : 'Join League'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Container>
     </Box>
   );

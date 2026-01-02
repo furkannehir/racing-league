@@ -56,14 +56,14 @@ class InviteService:
 
     @staticmethod
     def get_invites_by_user(email):
-        return Invite.get_invites_by_user(email)
+        return Invite.get_active_invites_by_user(email)
 
     @staticmethod
     def get_sent_invites_by_user(email):
         return Invite.get_sent_invites_by_user(email)
 
     @staticmethod
-    def accept_invite(invite_id):
+    def accept_invite(invite_id, league_user_name=None):
         uid = AuthService.get_current_user()
         user = auth.get_user(uid)
         invite = Invite.get_invite_by_id(invite_id)
@@ -75,7 +75,8 @@ class InviteService:
         invite = Invite.get_invite_by_id(invite_id)
         if invite.status != "pending":
             raise Exception("Invite is not pending")
-        invite.league.add_participant(userObj.email, userObj.name)
+        # Add participant with email, user name, and custom league_user_name (defaults to user name if not provided)
+        invite.league.add_participant(userObj.email, userObj.name, league_user_name=league_user_name or userObj.name)
         invite.accept()
         return invite
 

@@ -45,6 +45,24 @@ class LeagueService:
                     except (ValueError, TypeError):
                         race['date'] = datetime.now(timezone.utc)
 
+        # Convert participants from email strings to objects with email and league_user_name
+        if 'participants' in data and data['participants']:
+            from src.user_module.user import User
+            new_participants = []
+            for participant in data['participants']:
+                if isinstance(participant, str):
+                    # Old format - convert to new format
+                    user = User.get_user_by_mail(participant)
+                    league_user_name = user.name if user else participant
+                    new_participants.append({
+                        "email": participant,
+                        "league_user_name": league_user_name
+                    })
+                elif isinstance(participant, dict):
+                    # Already in new format
+                    new_participants.append(participant)
+            data['participants'] = new_participants
+
         league = League._create_league_from_document(data)
         league.save()
         return league
@@ -93,8 +111,8 @@ class LeagueService:
 
                 # Find user's position
                 position = 1
-                for i, (participant, points) in enumerate(points_list):
-                    if participant == email:
+                for i, (participant_email, points) in enumerate(points_list):
+                    if participant_email == email:
                         # Handle ties (same points get same position)
                         if i > 0 and points_list[i - 1][1] == points:
                             # If tied with previous participant, use their position
@@ -148,9 +166,12 @@ class LeagueService:
         if not race_exists:
             raise Exception("Race not found in league calendar")
 
+        # Build list of participant emails (handle both old and new formats)
+        participant_emails = [p if isinstance(p, str) else p.get('email') for p in league.participants]
+
         # Verify all participants in results are in the league
         for participant in results.keys():
-            if participant not in league.participants:
+            if participant not in participant_emails:
                 raise Exception(f"Participant {participant} is not in the league")
 
         # Process extended statistics from results

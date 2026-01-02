@@ -83,6 +83,21 @@ class Invite:
             deleted_at=invite["deleted_at"]
         ) for invite in invites]
         return invite_list
+    
+    def get_active_invites_by_user(email):
+        invites = db.invites.find({"invited_user": email, "status": "pending"})
+
+        invite_list = [Invite(
+            _id=invite["_id"],
+            invited_user=invite["invited_user"],
+            league=League.get_league_by_id(invite["league"]),
+            inviter=User.get_user_by_mail(invite["inviter"]),
+            status=invite["status"],
+            created_at=invite["created_at"],
+            updated_at=invite["updated_at"],
+            deleted_at=invite["deleted_at"]
+        ) for invite in invites]
+        return invite_list
 
     @staticmethod
     def get_invite_by_id(invite_id):

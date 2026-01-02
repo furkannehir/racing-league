@@ -23,6 +23,13 @@ export interface RaceDetails {
     dnfs: number;
     name?: string;
   }
+
+  export interface LeagueParticipant {
+    email: string;
+    league_user_name: string;
+    name?: string;  // User's actual name from User collection
+    id?: string;    // User's ID from User collection
+  }
   
   export interface League {
     _id: string;
@@ -34,7 +41,7 @@ export interface RaceDetails {
     max_players: number;
     name: string;
     owner: string;
-    participants: string[];
+    participants: LeagueParticipant[];
     pointSystem: {};
     public: boolean;
     standings: {

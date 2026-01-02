@@ -118,17 +118,29 @@ class League:
         """Fetch detailed information for all participants"""
         participants_with_details = []
 
-        for email in self.participants:
+        for participant in self.participants:
+            # Handle both old format (string) and new format (dict)
+            if isinstance(participant, str):
+                email = participant
+                league_user_name = None
+            else:
+                email = participant.get('email')
+                league_user_name = participant.get('league_user_name')
+            
             user = User.get_user_by_mail(email)
             if user:
                 participants_with_details.append({
                     "email": email,
                     "name": user.name,
+                    "league_user_name": league_user_name or user.name,
                     "id": str(user._id)
                 })
             else:
                 # Include at least the email if user not found
-                participants_with_details.append({"email": email})
+                participants_with_details.append({
+                    "email": email,
+                    "league_user_name": league_user_name or email
+                })
 
         return participants_with_details
 
@@ -252,7 +264,9 @@ class League:
 
         # Initialize all participants with zero values for all stats
         for participant in self.participants:
-            overall[participant] = {
+            # Handle both old format (string) and new format (dict)
+            email = participant if isinstance(participant, str) else participant.get('email')
+            overall[email] = {
                 "points": 0,
                 "wins": 0,
                 "podiums": 0,
@@ -324,10 +338,14 @@ class League:
     
     @staticmethod
     def get_leagues_by_participant(participant_email):
+        # Query supports both old format (string array) and new format (object array)
         agg = [
             {
             "$match": {
-                "participants": {"$in": [participant_email]}
+                "$or": [
+                    {"participants": {"$in": [participant_email]}},  # Old format
+                    {"participants.email": participant_email}  # New format
+                ]
             }
             }
         ]
@@ -339,18 +357,27 @@ class League:
         leagues = db.leagues.find({"public": True})
         return [League._create_league_from_document(league) for league in leagues]
 
-    def add_participant(self, participant_email, user_name=None):
-        if participant_email in self.participants:
-            return
+    def add_participant(self, participant_email, user_name=None, league_user_name=None):
+        # Check if participant already exists (handle both formats)
+        for p in self.participants:
+            existing_email = p if isinstance(p, str) else p.get('email')
+            if existing_email == participant_email:
+                return
+
+        # Create participant object with email and league_user_name
+        participant_obj = {
+            "email": participant_email,
+            "league_user_name": league_user_name or user_name or participant_email
+        }
 
         # Add to participants list in the database
         db.leagues.update_one(
             {"_id": self._id},
-            {"$push": {"participants": participant_email}}
+            {"$push": {"participants": participant_obj}}
         )
 
         # Add to local participants list
-        self.participants.append(participant_email)
+        self.participants.append(participant_obj)
 
         # Initialize participant in standings with 0 points
         if "overall" not in self.standings:
@@ -374,12 +401,42 @@ class League:
         # Update participant count
         self.participantsCount = len(self.participants)
 
-    def remove_participant(self, participant_id):
-        if participant_id in self.participants:
+    def remove_participant(self, participant_email):
+        # Check if participant exists (handle both formats)
+        participant_exists = False
+        for p in self.participants:
+            existing_email = p if isinstance(p, str) else p.get('email')
+            if existing_email == participant_email:
+                participant_exists = True
+                break
+        
+        if participant_exists:
+            # Remove using both possible formats
             db.leagues.update_one(
                 {"_id": ObjectId(self._id)},
-                {"$pull": {"participants": participant_id}}
+                {"$pull": {
+                    "participants": {
+                        "$or": [
+                            participant_email,  # Old format (string)
+                            {"email": participant_email}  # New format (object)
+                        ]
+                    }
+                }}
             )
+            # Also try direct pull for both formats separately as fallback
+            db.leagues.update_one(
+                {"_id": ObjectId(self._id)},
+                {"$pull": {"participants": participant_email}}
+            )
+            db.leagues.update_one(
+                {"_id": ObjectId(self._id)},
+                {"$pull": {"participants": {"email": participant_email}}}
+            )
+            
+            # Update local list
+            self.participants = [p for p in self.participants 
+                               if (p if isinstance(p, str) else p.get('email')) != participant_email]
+            self.participantsCount = len(self.participants)
 
     def set_teams(self, teams_config):
         """
@@ -398,6 +455,9 @@ class League:
         # Validate all teams
         all_assigned_members = []
         
+        # Build a list of participant emails for validation
+        participant_emails = [p if isinstance(p, str) else p.get('email') for p in self.participants]
+        
         for team_name, members in teams_config.items():
             if not team_name or not isinstance(team_name, str):
                 raise ValueError("Team name must be a non-empty string")
@@ -410,7 +470,7 @@ class League:
             
             # Validate all members are participants
             for member in members:
-                if member not in self.participants:
+                if member not in participant_emails:
                     raise ValueError(f"Member '{member}' in team '{team_name}' is not a league participant")
                 
                 # Check for duplicate assignments

@@ -202,9 +202,9 @@ export const fetchMyInvites = async (): Promise<LeagueInvite[]> => {
 /**
  * Accept a league invitation
  */
-export const acceptLeagueInvite = async (inviteId: string): Promise<void> => {
+export const acceptLeagueInvite = async (inviteId: string, leagueUserName?: string): Promise<void> => {
   try {
-    await api.post(`/v1/invites/${inviteId}/accept`);
+    await api.post(`/v1/invites/${inviteId}/accept`, { league_user_name: leagueUserName });
   } catch (error) {
     console.error('Error accepting invite:', error);
     throw error;

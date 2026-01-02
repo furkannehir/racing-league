@@ -46,7 +46,9 @@ def create_invite():
 @invite_blueprint.route('/<invite_id>/accept', methods=['POST'])
 @login_required
 def accept_invite(invite_id):
-    invite = InviteService.accept_invite(invite_id)
+    data = request.json or {}
+    league_user_name = data.get('league_user_name')
+    invite = InviteService.accept_invite(invite_id, league_user_name)
     return jsonify(invite.serialize()), 200
 
 @invite_blueprint.route('/<invite_id>/decline', methods=['POST'])

@@ -48,7 +48,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
 import { fetchLeagueById, leaveLeague, fetchLeagueTeams, setLeagueTeams, removeLeagueTeam } from '../services/api';
-import { League, RaceDetails, TeamsWithStats, TeamsConfig } from '../types/league';
+import { League, RaceDetails, TeamsWithStats, TeamsConfig, LeagueParticipant } from '../types/league';
 import SubmitRaceResultsDialog from '../components/submit-race-results';
 import InvitePlayersDialog from '../components/invite-players-dialog';
 
@@ -534,14 +534,10 @@ const LeagueDetails: React.FC = () => {
                                   (() => {
                                     // Fall back to searching participants
                                     const participant = Array.isArray(league.participants) 
-                                      ? league.participants.find((p: any) => {
-                                          const pId = typeof p === 'string' ? p : p.email || p._id;
-                                          return pId === winnerId;
-                                        })
+                                      ? league.participants.find((p: LeagueParticipant) => p.email === winnerId)
                                       : null;
                                     if (participant) {
-                                      if (typeof participant === 'string') return participant;
-                                      return (participant as any).name || (participant as any).email || winnerId;
+                                      return participant.league_user_name || participant.name || participant.email || winnerId;
                                     }
                                     return winnerId;
                                   })();
@@ -599,21 +595,11 @@ const LeagueDetails: React.FC = () => {
                               .sort(([,a], [,b]) => (b.points - a.points))
                               .slice(0, 5)
                               .map(([driverId, stats], index) => {
-                                // Get driver name from standings or find from participants
-                                const driverName = stats.name || 
-                                  (() => {
-                                    const participant = Array.isArray(league.participants) 
-                                      ? league.participants.find((p: any) => {
-                                          const pId = typeof p === 'string' ? p : p.email || p._id;
-                                          return pId === driverId;
-                                        })
-                                      : null;
-                                    if (participant) {
-                                      if (typeof participant === 'string') return participant;
-                                      return (participant as any).name || (participant as any).email || driverId;
-                                    }
-                                    return driverId;
-                                  })();
+                                // Get driver name - prioritize league_user_name from participants
+                                const participant = Array.isArray(league.participants) 
+                                  ? league.participants.find((p: LeagueParticipant) => p.email === driverId)
+                                  : null;
+                                const driverName = participant?.league_user_name || participant?.name || stats.name || participant?.email || driverId;
                                 
                                 return (
                                   <TableRow key={driverId}>
@@ -725,21 +711,11 @@ const LeagueDetails: React.FC = () => {
                       {Object.entries(standings)
                         .sort(([,a], [,b]) => (b.points - a.points))
                         .map(([driverId, stats], index) => {
-                          // Get driver name from standings or find from participants
-                          const driverName = stats.name || 
-                            (() => {
-                              const participant = Array.isArray(league.participants) 
-                                ? league.participants.find((p: any) => {
-                                    const pId = typeof p === 'string' ? p : p.email || p._id;
-                                    return pId === driverId;
-                                  })
-                                : null;
-                              if (participant) {
-                                if (typeof participant === 'string') return participant;
-                                return (participant as any).name || (participant as any).email || driverId;
-                              }
-                              return driverId;
-                            })();
+                          // Get driver name - prioritize league_user_name from participants
+                          const participant = Array.isArray(league.participants) 
+                            ? league.participants.find((p: LeagueParticipant) => p.email === driverId)
+                            : null;
+                          const driverName = participant?.league_user_name || participant?.name || stats.name || participant?.email || driverId;
                           
                           return (
                             <TableRow key={driverId}>
@@ -1140,9 +1116,9 @@ const LeagueDetails: React.FC = () => {
                     </Typography>
                     
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {Array.isArray(league?.participants) && league.participants.map((participant: any) => {
-                        const email = typeof participant === 'string' ? participant : participant.email;
-                        const name = typeof participant === 'string' ? participant : (participant.name || participant.email);
+                      {Array.isArray(league?.participants) && league.participants.map((participant: LeagueParticipant) => {
+                        const email = participant.email;
+                        const name = participant.league_user_name || participant.name || participant.email;
                         const isInThisTeam = members.includes(email);
                         const isInOtherTeam = !isInThisTeam && Object.entries(editingTeams).some(
                           ([otherTeam, otherMembers]) => otherTeam !== teamName && otherMembers.includes(email)
