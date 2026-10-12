@@ -295,6 +295,43 @@ class MigrationTests(RegressionFixture, unittest.TestCase):
                               "invited_user": self.owner.email, "status": "pending", "created_at": now})
         return db.leagues.find_one({"_id": league_id}), race_id
 
+    def test_docker_startup_migrates_before_launching_workers(self):
+        from scripts.start_server import main
+        legacy, _ = self.legacy_league()
+
+        def launch(executable, command):
+            mongo.assert_schema_ready()
+            detail = LeagueService.get_league_detail(str(legacy["_id"]))
+            self.assertEqual(detail["standings"]["overall"][self.driver.email]["points"], 26)
+            self.assertEqual(executable, "gunicorn")
+            self.assertEqual(command, ["gunicorn", "-w", "4", "app:app"])
+
+        with patch("scripts.start_server.os.execvp", side_effect=launch) as execute:
+            self.assertEqual(main(["gunicorn", "-w", "4", "app:app"]), 0)
+            execute.assert_called_once()
+            self.assertEqual(main(["gunicorn", "-w", "4", "app:app"]), 0)
+        self.assertEqual(db.race_results.count_documents({}), 1)
+        self.assertEqual(db.league_members.count_documents({}), 2)
+        self.assertIn('ENTRYPOINT ["python", "scripts/start_server.py"]', Path("Dockerfile").read_text())
+
+    def test_docker_startup_does_not_launch_workers_on_failed_preflight(self):
+        from scripts.start_server import main
+        legacy, _ = self.legacy_league()
+        db.leagues.update_one({"_id": legacy["_id"]}, {"$set": {"owner": "missing@example.test"}})
+        with patch("scripts.start_server.os.execvp") as execute:
+            self.assertEqual(main(["gunicorn", "app:app"]), 1)
+            execute.assert_not_called()
+        self.assertNotIn("owner_id", db.leagues.find_one({"_id": legacy["_id"]}))
+        self.assertEqual(db.races.count_documents({}), 0)
+
+    def test_startup_default_command_honors_port(self):
+        from scripts.start_server import main
+        with patch.dict(os.environ, {"PORT": "10000"}), patch("scripts.start_server.os.execvp") as execute:
+            self.assertEqual(main([]), 0)
+        execute.assert_called_once_with("gunicorn", [
+            "gunicorn", "--workers", "4", "--bind", "0.0.0.0:10000", "app:app"
+        ])
+
     def test_migration_dry_run_apply_and_repeat_preserve_legacy_data(self):
         legacy, race_id = self.legacy_league()
         summary = migrate(db)
