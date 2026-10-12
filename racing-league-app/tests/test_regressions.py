@@ -277,8 +277,8 @@ class RegressionTests(RegressionFixture, unittest.TestCase):
 
 
 class MigrationTests(RegressionFixture, unittest.TestCase):
-    def legacy_league(self):
-        league_id, race_id = ObjectId(), ObjectId()
+    def legacy_league(self, race_id=None):
+        league_id, race_id = ObjectId(), race_id or ObjectId()
         now = datetime.now(timezone.utc)
         doc = {
             "_id": league_id, "name": "Legacy", "owner": self.other.email, "public": True,
@@ -313,6 +313,33 @@ class MigrationTests(RegressionFixture, unittest.TestCase):
         self.assertEqual(db.race_results.count_documents({}), 1)
         self.assertEqual(db.league_members.count_documents({}), 2)
         self.assertIn('ENTRYPOINT ["python", "scripts/start_server.py"]', Path("Dockerfile").read_text())
+
+    def test_migration_maps_legacy_uuid_race_ids_without_losing_results(self):
+        for legacy_id in ("56614b84b5d14293af7c940eae350820", "56614b84-b5d1-4293-af7c-940eae350820"):
+            with self.subTest(legacy_id=legacy_id):
+                legacy, _ = self.legacy_league(race_id=legacy_id)
+                first_plan = build_plan(db)
+                self.assertEqual(first_plan, build_plan(db))
+                self.assertTrue(migrate(db, apply=True)["applied"])
+                race = db.races.find_one({"league_id": legacy["_id"]})
+                self.assertIsInstance(race["_id"], ObjectId)
+                self.assertEqual(race["legacy_id"], legacy_id)
+                result = db.race_results.find_one({"league_id": legacy["_id"]})
+                self.assertEqual(result["race_id"], race["_id"])
+                detail = LeagueService.get_league_detail(str(legacy["_id"]))
+                self.assertEqual(detail["standings"]["overall"][self.driver.email]["points"], 26)
+                self.assertTrue(detail["standings"]["races"][str(race["_id"])][self.driver.email]["fastestLap"])
+                self.assertEqual(db.leagues.find_one({"_id": legacy["_id"]})["calendar"], legacy["calendar"])
+                self.assertEqual(migrate(db, apply=True)["operations"], 0)
+
+    def test_docker_startup_handles_the_production_legacy_uuid(self):
+        from scripts.start_server import main
+        self.legacy_league(race_id="56614b84b5d14293af7c940eae350820")
+        with patch("scripts.start_server.os.execvp") as execute:
+            self.assertEqual(main(["gunicorn", "app:app"]), 0)
+            execute.assert_called_once()
+        mongo.assert_schema_ready()
+        self.assertEqual(db.race_results.find_one({})["points"], 26)
 
     def test_docker_startup_does_not_launch_workers_on_failed_preflight(self):
         from scripts.start_server import main

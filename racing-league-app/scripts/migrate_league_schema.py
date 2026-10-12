@@ -71,23 +71,38 @@ def build_plan(database):
 
         race_ids = {}
         race_tracks = {}
+        seen_race_ids = set()
         for index, race in enumerate(league.get("calendar", [])):
             if not isinstance(race, dict) or not race.get("track"):
                 raise ValueError(f"League {league_id} has an invalid calendar race")
-            # Stable IDs allow a dry run and repeated runs to produce the same mapping.
-            race_id = ObjectId(race["_id"]) if race.get("_id") else ObjectId(
-                hashlib.sha256(f"{league_id}:{index}".encode()).hexdigest()[:24]
-            )
+            legacy_id = race.get("_id")
+            if legacy_id is not None and not isinstance(legacy_id, (str, ObjectId)):
+                raise ValueError(f"League {league_id} has an unsupported race ID type")
+            if legacy_id and ObjectId.is_valid(legacy_id):
+                race_id = ObjectId(legacy_id)
+            else:
+                # The old backend generated UUIDs, which cannot be cast to ObjectId.
+                # Scope a stable mapping to this league and retain the original ID.
+                key = f"{league_id}:legacy-race:{legacy_id}" if legacy_id else f"{league_id}:{index}"
+                race_id = ObjectId(hashlib.sha256(key.encode()).hexdigest()[:24])
+            if race_id in seen_race_ids:
+                raise ValueError(f"League {league_id} has duplicate calendar race IDs")
+            seen_race_ids.add(race_id)
             existing = database.races.find_one({"_id": race_id})
             if existing and existing.get("league_id") != league_id:
                 raise ValueError("A race ID is already assigned to another league")
             race_ids[str(race_id)] = race_id
+            if legacy_id:
+                race_ids[str(legacy_id)] = race_id
             race_tracks.setdefault(race["track"], []).append(race_id)
-            add("races", {"_id": race_id}, {
+            race_doc = {
                 "league_id": league_id, "track": race["track"],
                 "date": parse_date(race.get("date")),
                 "status": race.get("status", "Upcoming"), "created_at": created_at,
-            })
+            }
+            if legacy_id and not ObjectId.is_valid(legacy_id):
+                race_doc["legacy_id"] = str(legacy_id)
+            add("races", {"_id": race_id}, race_doc)
 
         standings = league.get("standings", {})
         if not standings.get("races") and any(

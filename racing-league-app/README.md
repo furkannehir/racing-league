@@ -37,6 +37,8 @@ On Render, leave **Docker Command** empty to use the image's default command. An
 override should contain only the Gunicorn command/arguments; the image entrypoint
 still handles database preparation. To use the same startup flow outside Docker,
 run `python scripts/start_server.py` (it honors `PORT`, defaulting to 5000).
+Set the backend service's **Health Check Path** to `/api/v1/check` to check HTTP
+readiness. A deployment label alone does not verify that the app remains healthy.
 
 Stop application writes and take a database backup before the first deployment
 that applies the migration. To inspect or apply the migration manually, bypass the
@@ -54,7 +56,9 @@ the number of operations. Missing users, invalid race references, duplicate user
 emails, and standings that cannot be reconstructed cause it to fail before writing.
 The apply command runs the same preflight, then commits the conversion in a
 transaction. It preserves embedded legacy fields and existing child records,
-retains race IDs, converts invitations, and can be rerun without duplicating data.
+retains valid ObjectId race IDs, converts invitations, and can be rerun without
+duplicating data. Legacy UUID race IDs receive stable ObjectIds, with the original
+value retained as `legacy_id`; per-race standings are linked to the mapped IDs.
 Run the dry run again after applying; it should report zero operations. For a
 one-off Docker migration command, use `docker run --entrypoint python ...` so the
 normal automatic-startup migration does not run before a requested dry run.
