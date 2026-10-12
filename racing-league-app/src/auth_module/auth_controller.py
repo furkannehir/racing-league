@@ -41,21 +41,25 @@ def register():
     email = data.get('email')
     password = data.get('password')
     name = data.get('name')
-    ea_username = data.get('ea_username') if 'ea_username' in data else None
 
     if not email or not password:
         return jsonify({"message": "Email and password are required"}), 400
+
+    # Check if user already exists in MongoDB (email is the binding key)
+    existing = User.get_user_by_mail(email)
+    if existing:
+        return jsonify({"message": "User with this email already exists"}), 400
 
     response = AuthService.register_user(email, password)
 
     if isinstance(response, str) and "uid" not in response:
         return jsonify({"message": response}), 400  # Error message from Firebase
 
+    # Let MongoDB generate its own _id — email binds Firebase ↔ MongoDB
     user = User(
-        _id=response.uid,
+        _id=None,
         email=email,
         name=name,
-        eaUsername=ea_username
     )
     user.save()
 

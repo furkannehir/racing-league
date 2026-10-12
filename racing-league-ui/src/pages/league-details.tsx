@@ -30,7 +30,8 @@ import {
   Grid,
   Card,
   CardContent,
-  CardActions,
+  Tooltip,
+  Snackbar,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -47,10 +48,11 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
-import { fetchLeagueById, leaveLeague, fetchLeagueTeams, setLeagueTeams, removeLeagueTeam } from '../services/api';
+import { fetchLeagueById, leaveLeague, fetchLeagueTeams, setLeagueTeams, removeLeagueTeam, updateLeague, deleteLeague } from '../services/api';
 import { League, RaceDetails, TeamsWithStats, TeamsConfig, LeagueParticipant } from '../types/league';
 import SubmitRaceResultsDialog from '../components/submit-race-results';
 import InvitePlayersDialog from '../components/invite-players-dialog';
+import RaceDetailDialog from '../components/race-detail-dialog';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -82,12 +84,12 @@ const LeagueDetails: React.FC = () => {
   const { leagueId } = useParams<{ leagueId: string }>();
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
-  
+
   // League data state
   const [league, setLeague] = useState<League | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   // UI state
   const [activeTab, setActiveTab] = useState(0);
   const [leaveLeagueDialogOpen, setLeaveLeagueDialogOpen] = useState(false);
@@ -95,7 +97,17 @@ const LeagueDetails: React.FC = () => {
   const [submitResultsDialogOpen, setSubmitResultsDialogOpen] = useState(false);
   const [selectedRace, setSelectedRace] = useState<RaceDetails | null>(null);
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
-  
+  const [raceDetailDialogOpen, setRaceDetailDialogOpen] = useState(false);
+  const [deleteLeagueDialogOpen, setDeleteLeagueDialogOpen] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [deletingLeague, setDeletingLeague] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Settings form state
+  const [settingsName, setSettingsName] = useState('');
+  const [settingsMaxPlayers, setSettingsMaxPlayers] = useState(20);
+  const [settingsFastestLapPoint, setSettingsFastestLapPoint] = useState(0);
+
   // Teams state
   const [teams, setTeams] = useState<TeamsWithStats>({});
   const [teamsLoading, setTeamsLoading] = useState(false);
@@ -103,7 +115,7 @@ const LeagueDetails: React.FC = () => {
   const [editingTeams, setEditingTeams] = useState<TeamsConfig>({});
   const [newTeamName, setNewTeamName] = useState('');
   const [teamError, setTeamError] = useState<string | null>(null);
-  
+
   // Derived state - check if user is admin or owner
   const isAdmin = league?.admins?.includes(user?.email || '') || league?.owner === user?.email;
   const isOwner = league?.owner === user?.email;
@@ -112,13 +124,17 @@ const LeagueDetails: React.FC = () => {
   useEffect(() => {
     const getLeagueDetails = async () => {
       if (!leagueId) return;
-      
+
       try {
         setIsLoading(true);
         setError(null);
         const data = await fetchLeagueById(leagueId);
         setLeague(data);
-        
+        // Initialize settings form
+        setSettingsName(data.name);
+        setSettingsMaxPlayers(data.max_players);
+        setSettingsFastestLapPoint(data.fastestLapPoint);
+
         // Fetch teams data
         try {
           const teamsData = await fetchLeagueTeams(leagueId);
@@ -141,6 +157,7 @@ const LeagueDetails: React.FC = () => {
   }, [leagueId, isAuthenticated]);
 
   const handleOpenSubmitDialog = (race: RaceDetails) => {
+    setRaceDetailDialogOpen(false);
     setSelectedRace(race);
     setSubmitResultsDialogOpen(true);
   };
@@ -149,6 +166,12 @@ const LeagueDetails: React.FC = () => {
     setLeague(updatedLeague);
     setSubmitResultsDialogOpen(false);
     setSelectedRace(null);
+    setSuccessMessage('Race results submitted successfully!');
+  };
+
+  const handleOpenRaceDetail = (race: RaceDetails) => {
+    setSelectedRace(race);
+    setRaceDetailDialogOpen(true);
   };
 
   const handleOpenInviteDialog = () => {
@@ -157,6 +180,7 @@ const LeagueDetails: React.FC = () => {
 
   const handleInvitesSent = () => {
     setInviteDialogOpen(false);
+    setSuccessMessage('Invites sent successfully!');
   };
 
   // Team management functions
@@ -197,7 +221,7 @@ const LeagueDetails: React.FC = () => {
     setEditingTeams(prev => {
       const teamMembers = prev[teamName] || [];
       const isInTeam = teamMembers.includes(memberEmail);
-      
+
       if (isInTeam) {
         // Remove from team
         return {
@@ -229,7 +253,7 @@ const LeagueDetails: React.FC = () => {
 
   const handleSaveTeams = async () => {
     if (!leagueId) return;
-    
+
     // Validate teams
     for (const [teamName, members] of Object.entries(editingTeams)) {
       if (members.length < 1) {
@@ -241,15 +265,16 @@ const LeagueDetails: React.FC = () => {
         return;
       }
     }
-    
+
     try {
       setTeamsLoading(true);
       const updatedTeams = await setLeagueTeams(leagueId, editingTeams);
       setTeams(updatedTeams);
       setEditTeamsDialogOpen(false);
       setTeamError(null);
+      setSuccessMessage('Teams updated successfully!');
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 
+      const errorMessage = err instanceof Error ? err.message :
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to save teams';
       setTeamError(errorMessage);
     } finally {
@@ -259,7 +284,7 @@ const LeagueDetails: React.FC = () => {
 
   const handleDeleteTeam = async (teamName: string) => {
     if (!leagueId) return;
-    
+
     try {
       await removeLeagueTeam(leagueId, teamName);
       setTeams(prev => {
@@ -267,8 +292,10 @@ const LeagueDetails: React.FC = () => {
         delete updated[teamName];
         return updated;
       });
+      setSuccessMessage(`Team "${teamName}" deleted successfully!`);
     } catch (err) {
       console.error('Error deleting team:', err);
+      setError('Failed to delete team. Please try again.');
     }
   };
 
@@ -277,7 +304,7 @@ const LeagueDetails: React.FC = () => {
     setActiveTab(newValue);
     console.log(event);
   };
-  
+
   // Handle menu
   const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -286,14 +313,15 @@ const LeagueDetails: React.FC = () => {
   const handleMenuClose = () => {
     setAnchorEl(null);
   };
-  
+
   // Handle league leave
   const handleLeaveLeague = async () => {
     if (!leagueId) return;
-    
+
     try {
       await leaveLeague(leagueId);
       navigate('/leagues');
+      setSuccessMessage('You have left the league.');
     } catch (err) {
       console.error('Error leaving league:', err);
       setError('Failed to leave league. Please try again.');
@@ -302,13 +330,61 @@ const LeagueDetails: React.FC = () => {
     }
   };
 
+  // Handle save settings
+  const handleSaveSettings = async () => {
+    if (!leagueId) return;
+
+    try {
+      setSavingSettings(true);
+      setError(null);
+      const updatedLeague = await updateLeague(leagueId, {
+        name: settingsName,
+        max_players: settingsMaxPlayers,
+        fastestLapPoint: settingsFastestLapPoint,
+      } as Partial<League>);
+      setLeague(updatedLeague);
+      setSuccessMessage('Settings saved successfully!');
+    } catch (err) {
+      console.error('Error saving settings:', err);
+      setError('Failed to save settings. Please try again.');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // Handle delete league
+  const handleDeleteLeague = async () => {
+    if (!leagueId) return;
+
+    try {
+      setDeletingLeague(true);
+      await deleteLeague(leagueId);
+      navigate('/leagues');
+      setSuccessMessage('League deleted successfully!');
+    } catch (err) {
+      console.error('Error deleting league:', err);
+      setError('Failed to delete league. Please try again.');
+    } finally {
+      setDeletingLeague(false);
+      setDeleteLeagueDialogOpen(false);
+    }
+  };
+
+  const handleCloseSnackbar = (_event?: React.SyntheticEvent | Event, reason?: string) => {
+    if (reason === 'clickaway') {
+      return;
+    }
+    setSuccessMessage(null);
+  };
+
   if (isLoading) {
     return (
-      <Box 
-        display="flex" 
-        justifyContent="center" 
-        alignItems="center" 
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
         minHeight="100vh"
+        minWidth="100vw"
         sx={{ backgroundColor: 'background.default' }}
       >
         <CircularProgress color="primary" size={60} />
@@ -334,18 +410,18 @@ const LeagueDetails: React.FC = () => {
   }
 
   // Find completed races from calendar
-  const completedRaces = Array.isArray(league.calendar) 
+  const completedRaces = Array.isArray(league.calendar)
     ? league.calendar
-        .filter(race => typeof race !== 'string' && race.status === 'Completed')
-        .map(race => race as RaceDetails)
+      .filter(race => typeof race !== 'string' && race.status === 'Completed')
+      .map(race => race as RaceDetails)
     : [];
 
   // Get standings data from overall standings
   const standings = league.standings?.overall || {};
 
   return (
-    <Box 
-      sx={{ 
+    <Box
+      sx={{
         backgroundColor: 'background.default',
         minHeight: '100vh',
         minWidth: '95vw',
@@ -357,8 +433,8 @@ const LeagueDetails: React.FC = () => {
     >
       <Container maxWidth="lg">
         {/* League header */}
-        <Box 
-          sx={{ 
+        <Box
+          sx={{
             display: 'flex',
             flexDirection: { xs: 'column', sm: 'row' },
             alignItems: { xs: 'flex-start', sm: 'center' },
@@ -367,7 +443,7 @@ const LeagueDetails: React.FC = () => {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', mb: { xs: 2, sm: 0 } }}>
-            <IconButton 
+            <IconButton
               sx={{ mr: 2 }}
               onClick={() => navigate('/leagues')}
             >
@@ -389,15 +465,15 @@ const LeagueDetails: React.FC = () => {
                 <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
                   {league.name}
                 </Typography>
-                <Chip 
-                  label={league.status === 'active' ? 'Active' : 'Pending'} 
+                <Chip
+                  label={league.status === 'active' ? 'Active' : 'Pending'}
                   color={league.status === 'active' ? 'success' : 'warning'}
                   size="small"
                   sx={{ ml: 1 }}
                 />
                 {isAdmin && (
-                  <Chip 
-                    label="Admin" 
+                  <Chip
+                    label="Admin"
                     color="primary"
                     size="small"
                     icon={<SettingsIcon fontSize="small" />}
@@ -405,21 +481,21 @@ const LeagueDetails: React.FC = () => {
                 )}
               </Box>
               <Typography color="text.secondary" variant="subtitle1">
-                {league.participantsCount} Members 
+                {league.participantsCount} Members
                 {/* Only show next race info if it exists */}
-                {(typeof league.next_race === 'object' && league.next_race) ? 
-                    ` • Next race: ${league.next_race.track} (${league.next_race.date})` : 
-                    (league.next_race ? ` • ${league.next_race}` : '')
+                {(typeof league.next_race === 'object' && league.next_race) ?
+                  ` • Next race: ${league.next_race.track} (${league.next_race.date})` :
+                  (league.next_race ? ` • ${league.next_race}` : '')
                 }
               </Typography>
             </Box>
           </Box>
-          
+
           <Box sx={{ display: 'flex', gap: 2 }}>
             {isAdmin && (
-              <Button 
-                variant="contained" 
-                color="primary" 
+              <Button
+                variant="contained"
+                color="primary"
                 startIcon={<EmailIcon />}
                 onClick={handleOpenInviteDialog}
               >
@@ -444,16 +520,6 @@ const LeagueDetails: React.FC = () => {
                 'aria-labelledby': 'league-actions-button',
               }}
             >
-              {isAdmin && [
-                <MenuItem key="edit" onClick={() => {
-                  handleMenuClose();
-                  // Navigate to edit page or open edit dialog
-                }}>
-                  <EditIcon fontSize="small" sx={{ mr: 1 }} />
-                  Edit League
-                </MenuItem>,
-                <Divider key="divider" />
-              ]}
               <MenuItem onClick={() => {
                 handleMenuClose();
                 setLeaveLeagueDialogOpen(true);
@@ -464,10 +530,10 @@ const LeagueDetails: React.FC = () => {
             </Menu>
           </Box>
         </Box>
-        
+
         {/* League tabs & content */}
-        <Paper 
-          sx={{ 
+        <Paper
+          sx={{
             bgcolor: 'rgba(30,30,30,0.85)',
             backgroundImage: 'linear-gradient(180deg, rgba(30,30,30,0.8) 0%, rgba(25,25,25,0.9) 100%)',
             borderRadius: 2,
@@ -492,17 +558,17 @@ const LeagueDetails: React.FC = () => {
               {isAdmin && <Tab label="Settings" icon={<SettingsIcon />} iconPosition="start" />}
             </Tabs>
           </Box>
-          
+
           {/* Overview Tab */}
           <TabPanel value={activeTab} index={0}>
             <Box sx={{ p: 3 }}>
               {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
-              
+
               <Grid container spacing={4}>
                 <Grid item xs={12} md={8}>
                   <Typography variant="h5" gutterBottom>League Overview</Typography>
                   <Divider sx={{ mb: 2 }} />
-                  
+
                   <Box sx={{ mb: 4 }}>
                     <Typography variant="h6" gutterBottom>Recent Results</Typography>
                     <TableContainer component={Paper} sx={{ mb: 2, bgcolor: 'rgba(0,0,0,0.2)' }}>
@@ -520,20 +586,20 @@ const LeagueDetails: React.FC = () => {
                             {completedRaces.map((race, index) => {
                               // Find winner from race results using race._id
                               const raceId = race._id;
-                              const winnerEntry = league.standings.races[raceId] ? 
+                              const winnerEntry = league.standings.races[raceId] ?
                                 Object.entries(league.standings.races[raceId])
-                                  .find(([_, result]) => result.position === 1) : 
+                                  .find(([_, result]) => result.position === 1) :
                                 null;
-                              
+
                               const winnerId = winnerEntry?.[0] || null;
                               let winnerName = 'Unknown';
-                              
+
                               if (winnerId) {
                                 // Try to get name from overall standings first
-                                winnerName = standings[winnerId]?.name || 
+                                winnerName = standings[winnerId]?.name ||
                                   (() => {
                                     // Fall back to searching participants
-                                    const participant = Array.isArray(league.participants) 
+                                    const participant = Array.isArray(league.participants)
                                       ? league.participants.find((p: LeagueParticipant) => p.email === winnerId)
                                       : null;
                                     if (participant) {
@@ -544,7 +610,7 @@ const LeagueDetails: React.FC = () => {
                               } else if (!league.standings.races[raceId]) {
                                 winnerName = 'No results';
                               }
-                              
+
                               return (
                                 <TableRow key={index}>
                                   <TableCell>{race.track}</TableCell>
@@ -564,19 +630,9 @@ const LeagueDetails: React.FC = () => {
                         </Box>
                       )}
                     </TableContainer>
-                    
-                    {isAdmin && (
-                      <Button 
-                        variant="outlined" 
-                        color="primary"
-                        startIcon={<AddIcon />}
-                        size="small"
-                      >
-                        Add Race Result
-                      </Button>
-                    )}
+
                   </Box>
-                  
+
                   <Box sx={{ mb: 4 }}>
                     <Typography variant="h6" gutterBottom>Top Drivers</Typography>
                     <TableContainer component={Paper} sx={{ bgcolor: 'rgba(0,0,0,0.2)' }}>
@@ -592,22 +648,22 @@ const LeagueDetails: React.FC = () => {
                           </TableHead>
                           <TableBody>
                             {Object.entries(standings)
-                              .sort(([,a], [,b]) => (b.points - a.points))
+                              .sort(([, a], [, b]) => (b.points - a.points))
                               .slice(0, 5)
                               .map(([driverId, stats], index) => {
                                 // Get driver name - prioritize league_user_name from participants
-                                const participant = Array.isArray(league.participants) 
+                                const participant = Array.isArray(league.participants)
                                   ? league.participants.find((p: LeagueParticipant) => p.email === driverId)
                                   : null;
                                 const driverName = participant?.league_user_name || participant?.name || stats.name || participant?.email || driverId;
-                                
+
                                 return (
                                   <TableRow key={driverId}>
                                     <TableCell>
-                                      <Chip 
-                                        label={`#${index + 1}`} 
-                                        color={index === 0 ? 'success' : 'default'} 
-                                        size="small" 
+                                      <Chip
+                                        label={`#${index + 1}`}
+                                        color={index === 0 ? 'success' : 'default'}
+                                        size="small"
                                       />
                                     </TableCell>
                                     <TableCell>{driverName}</TableCell>
@@ -628,71 +684,64 @@ const LeagueDetails: React.FC = () => {
                     </TableContainer>
                   </Box>
                 </Grid>
-                
+
                 <Grid item xs={12} md={4}>
                   <Typography variant="h5" gutterBottom>League Information</Typography>
                   <Divider sx={{ mb: 2 }} />
-                  
+
                   <Paper sx={{ p: 2, mb: 3, bgcolor: 'rgba(0,0,0,0.2)' }}>
                     <Typography variant="subtitle2" color="text.secondary">League Type</Typography>
                     <Typography variant="body1" sx={{ mb: 2 }}>
                       {league.public ? 'Public' : 'Private'} League
                     </Typography>
-                    
+
                     <Typography variant="subtitle2" color="text.secondary">Members</Typography>
                     <Typography variant="body1" sx={{ mb: 2 }}>
                       {league.participantsCount} / {league.max_players} Members
                     </Typography>
-                    
+
                     <Typography variant="subtitle2" color="text.secondary">Created</Typography>
                     <Typography variant="body1" sx={{ mb: 2 }}>
                       {new Date(league.created_at).toLocaleDateString()}
                     </Typography>
-                    
+
                     <Typography variant="subtitle2" color="text.secondary">Point System</Typography>
                     <Typography variant="body1" sx={{ mb: 1 }}>
-                      {league.fastestLapPoint > 0 ? 
+                      {league.fastestLapPoint > 0 ?
                         `Standard F1 + ${league.fastestLapPoint} for fastest lap` :
                         'Standard F1 points'}
                     </Typography>
                   </Paper>
-                  
+
                   <Typography variant="h6" gutterBottom>Next Race</Typography>
-                    <Card sx={{ mb: 3, bgcolor: 'rgba(0,0,0,0.2)' }}>
+                  <Card sx={{ mb: 3, bgcolor: 'rgba(0,0,0,0.2)' }}>
                     <CardContent>
-                        {league.next_race !== null ? (
+                      {league.next_race !== null ? (
                         <>
-                            <Typography variant="h6" gutterBottom>{league.next_race?.track}</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                          <Typography variant="h6" gutterBottom>{league.next_race?.track}</Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                             {league.next_race?.date}
-                            </Typography>
+                          </Typography>
                         </>
-                        ) : (
-                            <Typography variant="body2" color="text.secondary">
-                            No upcoming races
-                            </Typography>
-                        )
-                        }
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          No upcoming races
+                        </Typography>
+                      )
+                      }
                     </CardContent>
-                    {isAdmin && (
-                        <CardActions>
-                        <Button size="small">
-                            {league.next_race ? 'Edit' : 'Add Race'}
-                        </Button>
-                        </CardActions>
-                    )}
-                </Card>
+                  </Card>
                 </Grid>
               </Grid>
             </Box>
           </TabPanel>
-          
+
           {/* Standings Tab */}
           <TabPanel value={activeTab} index={1}>
             <Box sx={{ p: 3 }}>
               <Typography variant="h5" gutterBottom>Championship Standings</Typography>
               <Divider sx={{ mb: 3 }} />
-              
+
               <TableContainer component={Paper} sx={{ bgcolor: 'rgba(0,0,0,0.2)' }}>
                 {Object.keys(standings).length > 0 ? (
                   <Table>
@@ -709,21 +758,21 @@ const LeagueDetails: React.FC = () => {
                     </TableHead>
                     <TableBody>
                       {Object.entries(standings)
-                        .sort(([,a], [,b]) => (b.points - a.points))
+                        .sort(([, a], [, b]) => (b.points - a.points))
                         .map(([driverId, stats], index) => {
                           // Get driver name - prioritize league_user_name from participants
-                          const participant = Array.isArray(league.participants) 
+                          const participant = Array.isArray(league.participants)
                             ? league.participants.find((p: LeagueParticipant) => p.email === driverId)
                             : null;
                           const driverName = participant?.league_user_name || participant?.name || stats.name || participant?.email || driverId;
-                          
+
                           return (
                             <TableRow key={driverId}>
                               <TableCell>
-                                <Chip 
-                                  label={`#${index + 1}`} 
+                                <Chip
+                                  label={`#${index + 1}`}
                                   color={index === 0 ? 'success' : 'default'}
-                                  size="small" 
+                                  size="small"
                                 />
                               </TableCell>
                               <TableCell>{driverName}</TableCell>
@@ -750,15 +799,15 @@ const LeagueDetails: React.FC = () => {
               </TableContainer>
             </Box>
           </TabPanel>
-          
+
           {/* Teams Tab */}
           <TabPanel value={activeTab} index={2}>
             <Box sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5">Team Standings</Typography>
                 {isAdmin && (
-                  <Button 
-                    variant="contained" 
+                  <Button
+                    variant="contained"
                     color="primary"
                     startIcon={<EditIcon />}
                     onClick={handleOpenEditTeamsDialog}
@@ -768,27 +817,27 @@ const LeagueDetails: React.FC = () => {
                 )}
               </Box>
               <Divider sx={{ mb: 3 }} />
-              
+
               {Object.keys(teams).length > 0 ? (
                 <Grid container spacing={3}>
                   {Object.entries(teams)
-                    .sort(([,a], [,b]) => b.total_points - a.total_points)
+                    .sort(([, a], [, b]) => b.total_points - a.total_points)
                     .map(([teamName, teamData], index) => (
                       <Grid item xs={12} md={6} lg={4} key={teamName}>
                         <Card sx={{ bgcolor: 'rgba(0,0,0,0.2)', height: '100%' }}>
                           <CardContent>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Chip 
-                                  label={`#${index + 1}`} 
+                                <Chip
+                                  label={`#${index + 1}`}
                                   color={index === 0 ? 'success' : index === 1 ? 'primary' : index === 2 ? 'warning' : 'default'}
                                   size="small"
                                 />
                                 <Typography variant="h6">{teamName}</Typography>
                               </Box>
                               {isAdmin && (
-                                <IconButton 
-                                  size="small" 
+                                <IconButton
+                                  size="small"
                                   color="error"
                                   onClick={() => handleDeleteTeam(teamName)}
                                 >
@@ -796,7 +845,7 @@ const LeagueDetails: React.FC = () => {
                                 </IconButton>
                               )}
                             </Box>
-                            
+
                             <Box sx={{ display: 'flex', justifyContent: 'space-around', mb: 2, py: 1, bgcolor: 'rgba(255,255,255,0.05)', borderRadius: 1 }}>
                               <Box sx={{ textAlign: 'center' }}>
                                 <Typography variant="h5" color="primary">{teamData.total_points}</Typography>
@@ -811,7 +860,7 @@ const LeagueDetails: React.FC = () => {
                                 <Typography variant="caption" color="text.secondary">Podiums</Typography>
                               </Box>
                             </Box>
-                            
+
                             <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                               Team Members
                             </Typography>
@@ -844,8 +893,8 @@ const LeagueDetails: React.FC = () => {
                     Teams haven't been set up for this league yet.
                   </Typography>
                   {isAdmin && (
-                    <Button 
-                      variant="contained" 
+                    <Button
+                      variant="contained"
                       color="primary"
                       startIcon={<AddIcon />}
                       onClick={handleOpenEditTeamsDialog}
@@ -857,66 +906,94 @@ const LeagueDetails: React.FC = () => {
               )}
             </Box>
           </TabPanel>
-          
+
           {/* Calendar Tab */}
           <TabPanel value={activeTab} index={3}>
             <Box sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5">Race Calendar</Typography>
                 {isAdmin && (
-                  <Button 
-                    variant="contained" 
-                    color="primary"
-                    startIcon={<AddIcon />}
-                    size="small"
-                  >
-                    Add Race
-                  </Button>
+                  <Tooltip title="Coming Soon">
+                    <span>
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<AddIcon />}
+                        size="small"
+                        disabled
+                      >
+                        Add Race
+                      </Button>
+                    </span>
+                  </Tooltip>
                 )}
               </Box>
               <Divider sx={{ mb: 3 }} />
-              
+
               <Grid container spacing={2}>
                 {Array.isArray(league.calendar) && league.calendar.length > 0 ? (
-                  league.calendar.map((race, index) => (
-                    <Grid item xs={12} md={6} key={index}>
-                      <Card sx={{ mb: 2, bgcolor: 'rgba(0,0,0,0.2)' }}>
-                        <CardContent>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="h6">
-                              {typeof race === 'string' ? race : race.track}
-                            </Typography>
-                            {typeof race !== 'string' && (
-                              <Chip 
-                                label={race.status || "Upcoming"} 
-                                size="small" 
-                                color={race.status === "Completed" ? "default" : "primary"} 
-                              />
+                  league.calendar.map((race, index) => {
+                    const isRaceObj = typeof race !== 'string';
+                    const raceStatus = isRaceObj ? race.status : undefined;
+                    const isRaceCompleted = raceStatus === 'Completed';
+                    // Check if this race has results
+                    const raceId = isRaceObj ? race._id : undefined;
+                    const raceHasResults = raceId ? Object.keys(league.standings?.races?.[raceId] || {}).length > 0 : false;
+
+                    return (
+                      <Grid item xs={12} md={6} key={index}>
+                        <Card
+                          sx={{
+                            mb: 2,
+                            bgcolor: 'rgba(0,0,0,0.2)',
+                            cursor: isRaceObj ? 'pointer' : 'default',
+                            transition: 'all 0.2s ease',
+                            '&:hover': isRaceObj ? {
+                              bgcolor: 'rgba(30, 144, 255, 0.08)',
+                              transform: 'translateY(-2px)',
+                              boxShadow: '0 6px 20px rgba(0,0,0,0.4)',
+                            } : {},
+                          }}
+                          onClick={() => isRaceObj && handleOpenRaceDetail(race as RaceDetails)}
+                        >
+                          <CardContent>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Typography variant="h6">
+                                {isRaceObj ? race.track : race}
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                {isRaceCompleted && raceHasResults && (
+                                  <Chip
+                                    label="Results"
+                                    size="small"
+                                    color="success"
+                                    variant="outlined"
+                                  />
+                                )}
+                                {isRaceObj && (
+                                  <Chip
+                                    label={raceStatus || 'Upcoming'}
+                                    size="small"
+                                    color={isRaceCompleted ? 'default' : 'primary'}
+                                  />
+                                )}
+                              </Box>
+                            </Box>
+                            {isRaceObj && (
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {race.date}
+                              </Typography>
                             )}
-                          </Box>
-                          {typeof race !== 'string' && (
-                            <Typography variant="body2" color="text.secondary">
-                              {race.date}
-                            </Typography>
-                          )}
-                        </CardContent>
-                        {isAdmin && (
-                        <CardActions>
-                            <Button size="small">Edit</Button>
-                            {typeof race !== 'string' && race.status !== 'Completed' && (
-                            <Button 
-                                size="small"
-                                color="warning"
-                                onClick={() => handleOpenSubmitDialog(race as RaceDetails)}
-                            >
-                                Submit Results
-                            </Button>
+                            {isRaceObj && (
+                              <Typography variant="caption" color="primary" sx={{ mt: 1, display: 'block' }}>
+                                Click to view details →
+                              </Typography>
                             )}
-                        </CardActions>
-                        )}
-                      </Card>
-                    </Grid>
-                  ))
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    );
+                  })
                 ) : (
                   <Grid item xs={12}>
                     <Paper sx={{ p: 4, textAlign: 'center', bgcolor: 'rgba(0,0,0,0.2)' }}>
@@ -927,13 +1004,18 @@ const LeagueDetails: React.FC = () => {
                         The race calendar for this league is empty.
                       </Typography>
                       {isAdmin && (
-                        <Button 
-                          variant="contained" 
-                          color="primary"
-                          startIcon={<AddIcon />}
-                        >
-                          Create First Race
-                        </Button>
+                        <Tooltip title="Coming Soon">
+                          <span>
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              startIcon={<AddIcon />}
+                              disabled
+                            >
+                              Create First Race
+                            </Button>
+                          </span>
+                        </Tooltip>
                       )}
                     </Paper>
                   </Grid>
@@ -941,14 +1023,14 @@ const LeagueDetails: React.FC = () => {
               </Grid>
             </Box>
           </TabPanel>
-          
+
           {/* Settings Tab (Admin Only) */}
           {isAdmin && (
             <TabPanel value={activeTab} index={4}>
               <Box sx={{ p: 3 }}>
                 <Typography variant="h5" gutterBottom>League Settings</Typography>
                 <Divider sx={{ mb: 3 }} />
-                
+
                 <Grid container spacing={3}>
                   <Grid item xs={12} md={6}>
                     <Typography variant="h6" gutterBottom>General Settings</Typography>
@@ -957,59 +1039,80 @@ const LeagueDetails: React.FC = () => {
                         label="League Name"
                         fullWidth
                         margin="normal"
-                        defaultValue={league.name}
+                        value={settingsName}
+                        onChange={(e) => setSettingsName(e.target.value)}
                       />
-                      
+
                       <TextField
                         label="Maximum Players"
                         type="number"
                         fullWidth
                         margin="normal"
-                        defaultValue={league.max_players}
+                        value={settingsMaxPlayers}
+                        onChange={(e) => setSettingsMaxPlayers(Number(e.target.value))}
                       />
-                      
+
                       <TextField
                         label="Points for Fastest Lap"
                         type="number"
                         fullWidth
                         margin="normal"
-                        defaultValue={league.fastestLapPoint}
+                        value={settingsFastestLapPoint}
+                        onChange={(e) => setSettingsFastestLapPoint(Number(e.target.value))}
                       />
-                      
+
                       <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
-                        <Button variant="contained" color="primary">
-                          Save Settings
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          onClick={handleSaveSettings}
+                          disabled={savingSettings}
+                          startIcon={savingSettings ? <CircularProgress size={20} /> : undefined}
+                        >
+                          {savingSettings ? 'Saving...' : 'Save Settings'}
                         </Button>
                       </Box>
                     </Paper>
                   </Grid>
-                  
+
                   <Grid item xs={12} md={6}>
                     <Typography variant="h6" gutterBottom>Admin Actions</Typography>
                     <Paper sx={{ p: 2, bgcolor: 'rgba(0,0,0,0.2)' }}>
-                      <Button
-                        fullWidth
-                        variant="outlined"
-                        color="primary"
-                        sx={{ mb: 2 }}
-                      >
-                        Manage Admins
-                      </Button>
-                      
-                      <Button
-                        fullWidth
-                        variant="outlined"
-                        color="primary"
-                        sx={{ mb: 2 }}
-                      >
-                        Manage Members
-                      </Button>
-                      
+                      <Tooltip title="Coming Soon">
+                        <span>
+                          <Button
+                            fullWidth
+                            variant="outlined"
+                            color="primary"
+                            sx={{ mb: 2 }}
+                            disabled
+                          >
+                            Manage Admins
+                          </Button>
+                        </span>
+                      </Tooltip>
+
+                      <Tooltip title="Coming Soon">
+                        <span>
+                          <Button
+                            fullWidth
+                            variant="outlined"
+                            color="primary"
+                            sx={{ mb: 2 }}
+                            disabled
+                          >
+                            Manage Members
+                          </Button>
+                        </span>
+                      </Tooltip>
+
                       {isOwner && (
                         <Button
                           fullWidth
                           variant="outlined"
                           color="error"
+                          onClick={() => setDeleteLeagueDialogOpen(true)}
+                          startIcon={<DeleteIcon />}
                         >
                           Delete League
                         </Button>
@@ -1022,7 +1125,7 @@ const LeagueDetails: React.FC = () => {
           )}
         </Paper>
       </Container>
-      
+
       {/* Leave League Dialog */}
       <Dialog
         open={leaveLeagueDialogOpen}
@@ -1041,6 +1144,14 @@ const LeagueDetails: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      <RaceDetailDialog
+        open={raceDetailDialogOpen}
+        onClose={() => { setRaceDetailDialogOpen(false); setSelectedRace(null); }}
+        race={selectedRace}
+        league={league}
+        isAdmin={isAdmin || false}
+        onSubmitResults={handleOpenSubmitDialog}
+      />
       <SubmitRaceResultsDialog
         open={submitResultsDialogOpen}
         onClose={() => setSubmitResultsDialogOpen(false)}
@@ -1055,7 +1166,7 @@ const LeagueDetails: React.FC = () => {
         onClose={() => setInviteDialogOpen(false)}
         onInvitesSent={handleInvitesSent}
       />
-      
+
       {/* Edit Teams Dialog */}
       <Dialog
         open={editTeamsDialogOpen}
@@ -1070,7 +1181,7 @@ const LeagueDetails: React.FC = () => {
               {teamError}
             </Alert>
           )}
-          
+
           {/* Add new team */}
           <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
             <TextField
@@ -1081,17 +1192,17 @@ const LeagueDetails: React.FC = () => {
               fullWidth
               onKeyPress={(e) => e.key === 'Enter' && handleAddTeam()}
             />
-            <Button 
-              variant="contained" 
+            <Button
+              variant="contained"
               onClick={handleAddTeam}
               disabled={!newTeamName.trim()}
             >
               Add Team
             </Button>
           </Box>
-          
+
           <Divider sx={{ mb: 2 }} />
-          
+
           {/* Teams list */}
           {Object.keys(editingTeams).length > 0 ? (
             <Grid container spacing={2}>
@@ -1102,19 +1213,19 @@ const LeagueDetails: React.FC = () => {
                       <Typography variant="subtitle1" fontWeight="bold">
                         {teamName}
                       </Typography>
-                      <IconButton 
-                        size="small" 
+                      <IconButton
+                        size="small"
                         color="error"
                         onClick={() => handleRemoveTeamFromEdit(teamName)}
                       >
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Box>
-                    
+
                     <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                       Members ({members.length}/3) - Click to add/remove
                     </Typography>
-                    
+
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                       {Array.isArray(league?.participants) && league.participants.map((participant: LeagueParticipant) => {
                         const email = participant.email;
@@ -1123,7 +1234,7 @@ const LeagueDetails: React.FC = () => {
                         const isInOtherTeam = !isInThisTeam && Object.entries(editingTeams).some(
                           ([otherTeam, otherMembers]) => otherTeam !== teamName && otherMembers.includes(email)
                         );
-                        
+
                         return (
                           <Chip
                             key={email}
@@ -1133,7 +1244,7 @@ const LeagueDetails: React.FC = () => {
                             variant={isInThisTeam ? 'filled' : 'outlined'}
                             onClick={() => handleToggleMemberInTeam(teamName, email)}
                             disabled={isInOtherTeam}
-                            sx={{ 
+                            sx={{
                               opacity: isInOtherTeam ? 0.5 : 1,
                               cursor: isInOtherTeam ? 'not-allowed' : 'pointer'
                             }}
@@ -1153,9 +1264,9 @@ const LeagueDetails: React.FC = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditTeamsDialogOpen(false)}>Cancel</Button>
-          <Button 
-            onClick={handleSaveTeams} 
-            variant="contained" 
+          <Button
+            onClick={handleSaveTeams}
+            variant="contained"
             color="primary"
             disabled={teamsLoading || Object.keys(editingTeams).length === 0}
           >
@@ -1163,6 +1274,44 @@ const LeagueDetails: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Delete League Confirmation Dialog */}
+      <Dialog
+        open={deleteLeagueDialogOpen}
+        onClose={() => setDeleteLeagueDialogOpen(false)}
+      >
+        <DialogTitle>Delete League?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Delete "{league.name}"? It will be removed from league lists and become unavailable
+            to members. Its stored race results and team data will be retained.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteLeagueDialogOpen(false)} disabled={deletingLeague}>Cancel</Button>
+          <Button
+            onClick={handleDeleteLeague}
+            color="error"
+            variant="contained"
+            disabled={deletingLeague}
+            startIcon={deletingLeague ? <CircularProgress size={20} /> : <DeleteIcon />}
+          >
+            {deletingLeague ? 'Deleting...' : 'Delete League'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={!!successMessage}
+        autoHideDuration={4000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={handleCloseSnackbar} severity="success" sx={{ width: '100%' }}>
+          {successMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

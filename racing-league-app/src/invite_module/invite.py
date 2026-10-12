@@ -1,132 +1,90 @@
 from datetime import datetime, timezone
-
 from bson import ObjectId
-
 from src.config.mongo import db
-from src.league_module.league import League
-from src.user_module.user import User
 
 
 class Invite:
-    def __init__(self, invited_user, league, inviter, status="pending", _id=None, created_at=None, updated_at=None, deleted_at=None):
+    def __init__(self, league_id, inviter_id, invited_email, status="pending",
+                 _id=None, created_at=None, updated_at=None):
         self._id = _id
-        self.invited_user = invited_user
-        self.league = league
-        self.inviter = inviter
-        self.status = status
+        self.league_id = league_id  # ObjectId
+        self.inviter_id = inviter_id  # MongoDB user _id serialized as a string
+        self.invited_email = invited_email
+        self.status = status  # pending / accepted / declined
         self.created_at = created_at if created_at is not None else datetime.now(timezone.utc)
         self.updated_at = updated_at
-        self.deleted_at = deleted_at
 
     def serialize(self):
         return {
             "_id": str(self._id) if self._id else None,
-            "league": self.league.serialize(),
-            "invited_user": self.invited_user,
-            "inviter": self.inviter.serialize(),
+            "league_id": str(self.league_id),
+            "inviter_id": self.inviter_id,
+            "invited_email": self.invited_email,
             "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "deleted_at": self.deleted_at
         }
-    
+
     def save(self):
-        invite = {
-            "league": str(self.league._id),
-            "invited_user": self.invited_user,
-            "inviter": self.inviter.email,
+        """Insert a new invite"""
+        doc = {
+            "league_id": self.league_id,
+            "inviter_id": self.inviter_id,
+            "invited_email": self.invited_email,
             "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "deleted_at": self.deleted_at
         }
-        result = db.invites.insert_one(invite)
+        result = db.invites.insert_one(doc)
         self._id = result.inserted_id
 
     def update(self):
+        """Update invite status"""
+        self.updated_at = datetime.now(timezone.utc)
         db.invites.update_one(
             {"_id": self._id},
             {"$set": {
-                "league": str(self.league._id),
-                "invited_user": self.invited_user,
-                "inviter": self.inviter.email,
                 "status": self.status,
-                "created_at": self.created_at,
                 "updated_at": self.updated_at,
-                "deleted_at": self.deleted_at
             }}
         )
 
-    def delete(self):
-        db.invites.update_one({"_id": self._id}, {"$set": {"deleted_at": datetime.now(timezone.utc)}})
-
-    def accept(self):
-        self.status = "accepted"
-        self.update()
-
-    def decline(self):
-        self.status = "declined"
-        self.update()
+    @staticmethod
+    def get_by_id(invite_id):
+        doc = db.invites.find_one({"_id": ObjectId(invite_id)})
+        if doc:
+            return Invite._from_doc(doc)
+        return None
 
     @staticmethod
-    def get_invites_by_user(email):
-        invites = db.invites.find({"invited_user": email})
-
-        invite_list = [Invite(
-            _id=invite["_id"],
-            invited_user=invite["invited_user"],
-            league=League.get_league_by_id(invite["league"]),
-            inviter=User.get_user_by_mail(invite["inviter"]),
-            status=invite["status"],
-            created_at=invite["created_at"],
-            updated_at=invite["updated_at"],
-            deleted_at=invite["deleted_at"]
-        ) for invite in invites]
-        return invite_list
-    
-    def get_active_invites_by_user(email):
-        invites = db.invites.find({"invited_user": email, "status": "pending"})
-
-        invite_list = [Invite(
-            _id=invite["_id"],
-            invited_user=invite["invited_user"],
-            league=League.get_league_by_id(invite["league"]),
-            inviter=User.get_user_by_mail(invite["inviter"]),
-            status=invite["status"],
-            created_at=invite["created_at"],
-            updated_at=invite["updated_at"],
-            deleted_at=invite["deleted_at"]
-        ) for invite in invites]
-        return invite_list
+    def get_pending_by_email(email):
+        """Get all pending invites for an email"""
+        docs = db.invites.find({"invited_email": email, "status": "pending"})
+        return [Invite._from_doc(d) for d in docs]
 
     @staticmethod
-    def get_invite_by_id(invite_id):
-        invite = db.invites.find_one({"_id": ObjectId(invite_id)})
+    def get_sent_by_user(user_id):
+        """Get all pending invites sent by a user"""
+        docs = db.invites.find({"inviter_id": user_id, "status": "pending"})
+        return [Invite._from_doc(d) for d in docs]
+
+    @staticmethod
+    def exists(email, league_id):
+        """Check if a pending invite already exists"""
+        return db.invites.count_documents({
+            "invited_email": email,
+            "league_id": ObjectId(league_id),
+            "status": "pending"
+        }) > 0
+
+    @staticmethod
+    def _from_doc(doc):
         return Invite(
-            _id=invite["_id"],
-            invited_user=invite["invited_user"],
-            league=League.get_league_by_id(invite["league"]),
-            inviter=User.get_user_by_mail(invite["inviter"]),
-            status=invite["status"],
-            created_at=invite["created_at"],
-            updated_at=invite["updated_at"],
-            deleted_at=invite["deleted_at"]
+            _id=doc.get("_id"),
+            league_id=doc.get("league_id"),
+            inviter_id=doc.get("inviter_id"),
+            invited_email=doc.get("invited_email"),
+            status=doc.get("status", "pending"),
+            created_at=doc.get("created_at"),
+            updated_at=doc.get("updated_at"),
         )
-
-    @staticmethod
-    def get_invite_by_league_id(league_id):
-        return db.invites.find({"league": league_id})
-
-    @staticmethod
-    def get_sent_invites_by_user(email):
-        invites = db.invites.find({"inviter": email, "status": "pending"})
-        return [Invite(
-            _id=invite["_id"],
-            invited_user=invite["invited_user"],
-            league=invite["league"],
-            inviter=invite["inviter"],
-            status=invite["status"],
-            created_at= invite["created_at"],
-            updated_at= invite["updated_at"],
-            deleted_at= invite["deleted_at"]
-        )for invite in invites]

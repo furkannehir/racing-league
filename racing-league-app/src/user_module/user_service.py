@@ -1,19 +1,20 @@
 from src.user_module.user import User
-from src.league_module.league import League
-from datetime import datetime, timezone
+from src.league_module.race import Race
+from src.league_module.league_member import LeagueMember
 
 
 class UserService:
 
     @staticmethod
-    def get_next_race_of_user(email):
-        user = User.get_user_by_mail(email)
-        if user:
-            leagues = user.leagues
-            for league in leagues:
-                league = League.get_league_by_id(league)
-                if league and league.calendar:
-                    # Use the league's get_next_race method which properly handles timezone-aware comparisons
-                    next_race = league.get_next_race()
-                    if next_race:
-                        return next_race
+    def get_next_race_of_user(user_id):
+        """Get the next upcoming race for any league the user is in"""
+        memberships = LeagueMember.get_user_leagues(user_id)
+
+        next_race = None
+        for membership in memberships:
+            race = Race.get_next_race(str(membership.league_id))
+            if race:
+                if next_race is None or race.date < next_race.date:
+                    next_race = race
+
+        return next_race

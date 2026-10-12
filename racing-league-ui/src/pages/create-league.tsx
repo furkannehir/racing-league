@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -37,8 +37,17 @@ import {
   Delete as DeleteIcon,
   Check as CheckIcon,
 } from '@mui/icons-material';
-import { createLeague } from '../services/api';
+import { createLeague, getPointSystemPresets } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+
+interface PointSystemPreset {
+  _id: string;
+  name: string;
+  description: string;
+  points: Record<string, number>;
+  fastest_lap_point: number;
+  active: boolean;
+}
 
 interface FormValues {
     name: string;
@@ -75,6 +84,21 @@ const CreateLeague: React.FC = () => {
   const [trackInput, setTrackInput] = useState('');
   const [dateInput, setDateInput] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
+  const [presets, setPresets] = useState<PointSystemPreset[]>([]);
+  const [selectedPreset, setSelectedPreset] = useState<string>('');
+
+  // Fetch point system presets on mount
+  useEffect(() => {
+    const fetchPresets = async () => {
+      try {
+        const data = await getPointSystemPresets();
+        setPresets(data);
+      } catch (err) {
+        console.error('Failed to load point system presets:', err);
+      }
+    };
+    fetchPresets();
+  }, []);
   const [errors, setErrors] = useState({
     name: '',
     max_players: '',
@@ -509,27 +533,28 @@ const CreateLeague: React.FC = () => {
                     <Select
                       labelId="scoring-preset-label"
                       label="Use Preset"
-                      value=""
+                      value={selectedPreset}
                       onChange={(e) => {
-                        if (e.target.value === 'f1') {
-                          setFormValues({
-                            ...formValues,
-                            pointSystem: {...defaultPointSystem}
-                          });
-                        } else if (e.target.value === 'f1-2010') {
-                          setFormValues({
-                            ...formValues,
-                            pointSystem: {
-                              "1": 25, "2": 20, "3": 15, "4": 10, 
-                              "5": 8, "6": 6, "7": 4, "8": 3, "9": 2, "10": 1
-                            }
-                          });
+                        const presetId = e.target.value as string;
+                        setSelectedPreset(presetId);
+                        if (presetId) {
+                          const preset = presets.find(p => p._id === presetId);
+                          if (preset) {
+                            setFormValues({
+                              ...formValues,
+                              pointSystem: { ...preset.points },
+                              fastestLapPoint: preset.fastest_lap_point,
+                            });
+                          }
                         }
                       }}
                     >
                       <MenuItem value=""><em>Select a preset (optional)</em></MenuItem>
-                      <MenuItem value="f1">F1 Current (25, 18, 15, ...)</MenuItem>
-                      <MenuItem value="f1-2010">F1 2010-2018 (25, 20, 15, ...)</MenuItem>
+                      {presets.map((preset) => (
+                        <MenuItem key={preset._id} value={preset._id}>
+                          {preset.name}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>

@@ -96,7 +96,7 @@ class AuthService:
 
     @staticmethod
     def get_current_user():
-        """Get current user from the token in Authorization header"""
+        """Get current Firebase UID from the token in Authorization header"""
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return None
@@ -106,6 +106,40 @@ class AuthService:
             decoded_token = auth.verify_id_token(token)
             return decoded_token['user_id']
         except:
+            return None
+
+    @staticmethod
+    def get_current_mongo_user():
+        """
+        Resolve current Firebase user to MongoDB user via email.
+        Returns the MongoDB user, or None if it cannot be resolved.
+        """
+        from src.user_module.user import User
+
+        firebase_uid = AuthService.get_current_user()
+        if not firebase_uid:
+            return None
+
+        try:
+            fb_user = auth.get_user(firebase_uid)
+        except Exception:
+            return None
+
+        mongo_user = User.get_user_by_mail(fb_user.email)
+        return mongo_user
+
+    @staticmethod
+    def resolve_firebase_uid(firebase_uid):
+        """
+        Resolve a Firebase UID to a MongoDB user via email.
+        Useful for stored Firebase UIDs (e.g. inviter_id).
+        """
+        from src.user_module.user import User
+
+        try:
+            fb_user = auth.get_user(firebase_uid)
+            return User.get_user_by_mail(fb_user.email)
+        except Exception:
             return None
 
     @staticmethod

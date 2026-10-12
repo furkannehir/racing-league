@@ -34,7 +34,7 @@ docker-compose up -d
 ```bash
 cd racing-league-app
 pip install -r requirements.txt
-python src/app.py
+python app.py
 ```
 #### Frontend
 ```bash
@@ -42,6 +42,8 @@ cd racing-league-ui
 npm install
 npm run dev
 ```
+
+For an existing database, follow the [backend migration instructions](racing-league-app/README.md#database-migration-before-deployment) before deploying the new schema.
 
 ## Project Structure
 ```

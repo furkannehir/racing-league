@@ -1,4 +1,4 @@
-Flask==2.3.2
+Flask==2.3.3
 Flask-CORS==5.0.0
 firebase-admin==6.0.1
 python-dotenv==1.0.1
@@ -6,6 +6,6 @@ pymongo[srv]==4.6.3
 gunicorn==21.2.0
 requests==2.32.3
 openai==1.86.0
-Pillow==10.1.0
+Pillow>=10.4.0
 apscheduler==3.10.1
 mailersend~=2.0.0

@@ -153,6 +153,31 @@ export const fetchLeagueById = async (leagueId: string): Promise<League> => {
 };
 
 /**
+ * Update a league's settings
+ */
+export const updateLeague = async (leagueId: string, data: Partial<League>): Promise<League> => {
+  try {
+    const response = await api.put<League>(`/v1/leagues/${leagueId}`, data);
+    return response.data;
+  } catch (error) {
+    console.error(`Error updating league ${leagueId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Delete a league (owner/admin only)
+ */
+export const deleteLeague = async (leagueId: string): Promise<void> => {
+  try {
+    await api.delete(`/v1/leagues/${leagueId}`);
+  } catch (error) {
+    console.error(`Error deleting league ${leagueId}:`, error);
+    throw error;
+  }
+};
+
+/**
  * Join a league
  */
 export const joinLeague = async (leagueId: string): Promise<void> => {
@@ -255,12 +280,12 @@ export const createLeague = async (leagueData: {
  */
 export const submitRaceResult = async (
   leagueId: string, 
-  trackName: string, 
-  results: Record<string, { position: number; fastestLap?: boolean; points: number }>
+  raceId: string,
+  results: Record<string, { position: number; fastestLap?: boolean; points: number; dnf?: boolean }>
 ): Promise<League> => {
   try {
     const response = await api.post<League>(
-      `/v1/leagues/${leagueId}/races/${encodeURIComponent(trackName)}/results`, 
+      `/v1/leagues/${leagueId}/races/${encodeURIComponent(raceId)}/results`,
       results 
     );
     return response.data;
@@ -479,6 +504,25 @@ export const removeLeagueTeam = async (leagueId: string, teamName: string): Prom
     await api.delete(`/v1/leagues/${leagueId}/teams/${encodeURIComponent(teamName)}`);
   } catch (error) {
     console.error(`Error removing team ${teamName} from league ${leagueId}:`, error);
+    throw error;
+  }
+};
+/**
+ * Get point system presets
+ */
+export const getPointSystemPresets = async (): Promise<Array<{
+  _id: string;
+  name: string;
+  description: string;
+  points: Record<string, number>;
+  fastest_lap_point: number;
+  active: boolean;
+}>> => {
+  try {
+    const response = await api.get('/v1/point-systems');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching point system presets:', error);
     throw error;
   }
 };
