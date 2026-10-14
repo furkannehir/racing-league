@@ -32,6 +32,8 @@ import {
   CardContent,
   Tooltip,
   Snackbar,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -48,7 +50,8 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
-import { fetchLeagueById, leaveLeague, fetchLeagueTeams, setLeagueTeams, removeLeagueTeam, updateLeague, deleteLeague } from '../services/api';
+import { fetchLeagueById, leaveLeague, setLeagueTeams, removeLeagueTeam, updateLeague, deleteLeague } from '../services/api';
+import { sortedDrivers, sortedTeams } from '../services/standings';
 import { League, RaceDetails, TeamsWithStats, TeamsConfig, LeagueParticipant } from '../types/league';
 import SubmitRaceResultsDialog from '../components/submit-race-results';
 import InvitePlayersDialog from '../components/invite-players-dialog';
@@ -107,6 +110,7 @@ const LeagueDetails: React.FC = () => {
   const [settingsName, setSettingsName] = useState('');
   const [settingsMaxPlayers, setSettingsMaxPlayers] = useState(20);
   const [settingsFastestLapPoint, setSettingsFastestLapPoint] = useState(0);
+  const [settingsCreatorParticipates, setSettingsCreatorParticipates] = useState(true);
 
   // Teams state
   const [teams, setTeams] = useState<TeamsWithStats>({});
@@ -122,6 +126,7 @@ const LeagueDetails: React.FC = () => {
   const menuOpen = Boolean(anchorEl);
   // Fetch league data
   useEffect(() => {
+    let active = true;
     const getLeagueDetails = async () => {
       if (!leagueId) return;
 
@@ -129,31 +134,28 @@ const LeagueDetails: React.FC = () => {
         setIsLoading(true);
         setError(null);
         const data = await fetchLeagueById(leagueId);
+        if (!active) return;
         setLeague(data);
+        setTeams(data.teams || {});
         // Initialize settings form
         setSettingsName(data.name);
         setSettingsMaxPlayers(data.max_players);
         setSettingsFastestLapPoint(data.fastestLapPoint);
+        setSettingsCreatorParticipates(data.creatorParticipates ?? true);
 
-        // Fetch teams data
-        try {
-          const teamsData = await fetchLeagueTeams(leagueId);
-          setTeams(teamsData);
-        } catch (teamsErr) {
-          console.error('Error fetching teams:', teamsErr);
-          // Don't fail the whole page if teams fail to load
-        }
       } catch (err) {
+        if (!active) return;
         setError('Unable to load league details. Please try again.');
         console.error('Error fetching league details:', err);
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
       }
     };
 
     if (isAuthenticated && leagueId) {
       getLeagueDetails();
     }
+    return () => { active = false; };
   }, [leagueId, isAuthenticated]);
 
   const handleOpenSubmitDialog = (race: RaceDetails) => {
@@ -164,6 +166,7 @@ const LeagueDetails: React.FC = () => {
 
   const handleResultsSubmitted = (updatedLeague: League) => {
     setLeague(updatedLeague);
+    setTeams(updatedLeague.teams || {});
     setSubmitResultsDialogOpen(false);
     setSelectedRace(null);
     setSuccessMessage('Race results submitted successfully!');
@@ -179,8 +182,7 @@ const LeagueDetails: React.FC = () => {
   };
 
   const handleInvitesSent = () => {
-    setInviteDialogOpen(false);
-    setSuccessMessage('Invites sent successfully!');
+    setSuccessMessage('Invitations created. Email notifications are queued.');
   };
 
   // Team management functions
@@ -341,12 +343,13 @@ const LeagueDetails: React.FC = () => {
         name: settingsName,
         max_players: settingsMaxPlayers,
         fastestLapPoint: settingsFastestLapPoint,
+        ...(isOwner ? { creatorParticipates: settingsCreatorParticipates } : {}),
       } as Partial<League>);
       setLeague(updatedLeague);
       setSuccessMessage('Settings saved successfully!');
     } catch (err) {
       console.error('Error saving settings:', err);
-      setError('Failed to save settings. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to save settings. Please try again.');
     } finally {
       setSavingSettings(false);
     }
@@ -481,7 +484,7 @@ const LeagueDetails: React.FC = () => {
                 )}
               </Box>
               <Typography color="text.secondary" variant="subtitle1">
-                {league.participantsCount} Members
+                {league.participantsCount} Drivers
                 {/* Only show next race info if it exists */}
                 {(typeof league.next_race === 'object' && league.next_race) ?
                   ` • Next race: ${league.next_race.track} (${league.next_race.date})` :
@@ -588,7 +591,7 @@ const LeagueDetails: React.FC = () => {
                               const raceId = race._id;
                               const winnerEntry = league.standings.races[raceId] ?
                                 Object.entries(league.standings.races[raceId])
-                                  .find(([_, result]) => result.position === 1) :
+                                  .find(([, result]) => result.position === 1) :
                                 null;
 
                               const winnerId = winnerEntry?.[0] || null;
@@ -647,8 +650,7 @@ const LeagueDetails: React.FC = () => {
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {Object.entries(standings)
-                              .sort(([, a], [, b]) => (b.points - a.points))
+                            {sortedDrivers(standings)
                               .slice(0, 5)
                               .map(([driverId, stats], index) => {
                                 // Get driver name - prioritize league_user_name from participants
@@ -697,7 +699,7 @@ const LeagueDetails: React.FC = () => {
 
                     <Typography variant="subtitle2" color="text.secondary">Members</Typography>
                     <Typography variant="body1" sx={{ mb: 2 }}>
-                      {league.participantsCount} / {league.max_players} Members
+                      {league.participantsCount} / {league.max_players} Drivers
                     </Typography>
 
                     <Typography variant="subtitle2" color="text.secondary">Created</Typography>
@@ -757,8 +759,7 @@ const LeagueDetails: React.FC = () => {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {Object.entries(standings)
-                        .sort(([, a], [, b]) => (b.points - a.points))
+                      {sortedDrivers(standings)
                         .map(([driverId, stats], index) => {
                           // Get driver name - prioritize league_user_name from participants
                           const participant = Array.isArray(league.participants)
@@ -820,8 +821,7 @@ const LeagueDetails: React.FC = () => {
 
               {Object.keys(teams).length > 0 ? (
                 <Grid container spacing={3}>
-                  {Object.entries(teams)
-                    .sort(([, a], [, b]) => b.total_points - a.total_points)
+                  {sortedTeams(teams)
                     .map(([teamName, teamData], index) => (
                       <Grid item xs={12} md={6} lg={4} key={teamName}>
                         <Card sx={{ bgcolor: 'rgba(0,0,0,0.2)', height: '100%' }}>
@@ -1044,7 +1044,8 @@ const LeagueDetails: React.FC = () => {
                       />
 
                       <TextField
-                        label="Maximum Players"
+                        label="Maximum Drivers"
+                        helperText="Only participating drivers count toward this limit."
                         type="number"
                         fullWidth
                         margin="normal"
@@ -1062,6 +1063,12 @@ const LeagueDetails: React.FC = () => {
                       />
 
                       <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                        {isOwner && (
+                          <FormControlLabel sx={{ mr: 'auto' }}
+                            control={<Switch checked={settingsCreatorParticipates}
+                              onChange={(event) => setSettingsCreatorParticipates(event.target.checked)} />}
+                            label="I participate as a driver" />
+                        )}
                         <Button
                           variant="contained"
                           color="primary"
@@ -1134,7 +1141,8 @@ const LeagueDetails: React.FC = () => {
         <DialogTitle>Leave League?</DialogTitle>
         <DialogContent>
           <Typography>
-            Are you sure you want to leave "{league.name}"? You'll lose your position in the standings.
+            Are you sure you want to leave "{league.name}"? Your team assignment will be removed;
+            recorded race results will remain.
           </Typography>
         </DialogContent>
         <DialogActions>

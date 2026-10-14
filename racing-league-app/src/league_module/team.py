@@ -1,6 +1,7 @@
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from src.config.mongo import db, run_transaction
+from src.league_module.league_member import LeagueMember
 
 
 class Team:
@@ -87,6 +88,12 @@ class Team:
             new_teams.append(team)
 
         def replace(session):
+            LeagueMember.lock_league(league_id, session)
+            for team in new_teams:
+                for user_id in team.member_ids:
+                    member = LeagueMember.get_member(league_id, user_id, session=session)
+                    if not member or not member.is_participating:
+                        raise ValueError("Teams require participating drivers")
             db.teams.delete_many({"league_id": league_oid}, session=session)
             if new_teams:
                 db.teams.insert_many([{

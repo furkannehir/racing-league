@@ -34,13 +34,11 @@ const ResetPassword: React.FC = () => {
     setLoading(true);
 
     try {
-      await reset_password(email);
-      setSuccessMessage('If the email is real reset link is sent to your email');
+      const result = await reset_password(email);
+      setSuccessMessage(result.message);
       setEmail(''); // Clear the email field
     } catch (err) {
-      // Don't show specific errors to prevent user enumeration
-      setSuccessMessage('If the email is real reset link is sent to your email');
-      setEmail(''); // Clear the email field even on error
+      setError(err instanceof Error ? err.message : 'Could not request a password reset. Please try again.');
     } finally {
       setLoading(false);
     }

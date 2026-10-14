@@ -1,121 +1,16 @@
-import axios, { AxiosResponse, AxiosError } from 'axios';
-import { League, LeagueInvite, TeamsWithStats, TeamStanding, TeamsConfig } from '../types/league';
-import config from '../config/config';
-
-// Create an axios instance with appropriate configuration
-const api = axios.create({
-  baseURL: config.api.baseUrl,
-  headers: {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  },
-  maxRedirects: 0, // Don't follow redirects automatically
-});
-
-// Token management helper functions
-const getAuthToken = (): string | null => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token') || null;
-};
-
-const setAuthToken = (token: string, remember: boolean = false): void => {
-  if (remember) {
-    localStorage.setItem('token', token);
-  } else {
-    sessionStorage.setItem('token', token);
-  }
-};
-
-const clearAuthToken = (): void => {
-  localStorage.removeItem('token');
-  sessionStorage.removeItem('token');
-};
-
-// Add request interceptor for authentication
-api.interceptors.request.use(
-  config => {
-    // Add token to every request if available
-    const token = getAuthToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    } else {
-      if (!config.url?.includes('/auth')) {
-        console.error('Request without auth token:', config.url);
-      }
-    }
-    
-    return config;
-  },
-  error => {
-    console.error('Request interceptor error:', error);
-    return Promise.reject(error);
-  }
-);
-
-// Add response interceptor to handle common issues
-api.interceptors.response.use(
-  (response: AxiosResponse) => {
-    
-    // Check if response includes a new token
-    const newToken = response.headers['x-auth-token'];
-    if (newToken) {
-      setAuthToken(newToken);
-    }
-    
-    return response;
-  },
-  async (error: AxiosError<any>) => {
-    if (!error.response) {
-      console.error('Network error:', error.message);
-      return Promise.reject(new Error('Network error. Please check your connection.'));
-    }
-    
-    const { status, config } = error.response;
-    
-    // Handle authentication errors
-    if (status === 401 || status === 403) {
-      console.error(`Authentication error (${status})`);
-      clearAuthToken();
-      
-      // Redirect to login if not already there
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
-
-      return Promise.reject(new Error(error.response.data.message || 'Authentication error. Please log in again.'));
-    }
-    
-    // Handle redirects
-    if (status === 302) {
-      console.error('Received redirect. Current auth token may be invalid.');
-      
-      // Only redirect to login from non-login pages
-      if (window.location.pathname !== '/login') {
-        clearAuthToken();
-        window.location.href = '/login';
-      }
-    }
-    
-    // Handle other common errors
-    switch (status) {
-      case 404:
-        console.error(`Resource not found: ${config.url}`);
-        break;
-      case 500:
-        console.error('Server error');
-        break;
-      default:
-        console.error(`Error with status ${status}:`, error.response.data);
-    }
-    
-    return Promise.reject(error);
-  }
-);
+import axios from 'axios';
+import { League, LeagueDiscoveryPage, LeagueInvite, SentLeagueInvite, TeamsWithStats, TeamStanding, TeamsConfig } from '../types/league';
+import api, { fetchAuthUser, passwordChanged } from './auth-client';
+import { readSession, updateSessionUser } from './session';
+import { AuthUser, AccountEmailResponse } from '../types/auth';
+import { UserProfile } from '../types/user';
+import { validateScreenshots, ImageExtractionResponse } from './race-image-import';
 
 /**
  * Check if user is authenticated
  */
 export const isAuthenticated = (): boolean => {
-  return !!getAuthToken();
+  return !!readSession();
 };
 
 /**
@@ -204,15 +99,7 @@ export const leaveLeague = async (leagueId: string): Promise<void> => {
 /**
  * Test authentication status
  */
-export const checkAuth = async (): Promise<boolean> => {
-  try {
-    await api.get('/v1/auth/verify');
-    return true;
-  } catch (error) {
-    console.error('Auth check failed:', error);
-    return false;
-  }
-};
+export const checkAuth = (): Promise<AuthUser> => fetchAuthUser();
 
 export const fetchMyInvites = async (): Promise<LeagueInvite[]> => {
   try {
@@ -253,18 +140,13 @@ export const declineLeagueInvite = async (inviteId: string): Promise<void> => {
  */
 export const createLeague = async (leagueData: {
   name: string;
-  owner: string;
   public: boolean;
   calendar: Array<{track: string, date: string}>;
   pointSystem: Record<string, number>;
   max_players: number;
   fastestLapPoint: number;
-  participants: string[]; // Initial participants (likely just the creator)
-  invites: string[]; // People to invite
-  participantsCount: number;
-  next_race: {track: string, date: string} | null;
-  status: string;
-  admins: string[];
+  creatorParticipates: boolean;
+  invites: string[];
 }): Promise<League> => {
   try {
     const response = await api.post<League>('/v1/leagues', leagueData);
@@ -298,9 +180,9 @@ export const submitRaceResult = async (
 /**
  * Fetch current user's profile data
  */
-export const fetchUserProfile = async () => {
+export const fetchUserProfile = async (): Promise<UserProfile> => {
   try {
-    const response = await api.get('/v1/users/profile');
+    const response = await api.get<UserProfile>('/v1/users/profile');
     return response.data;
   } catch (error) {
     console.error('Error fetching user profile:', error);
@@ -312,15 +194,16 @@ export const fetchUserProfile = async () => {
  * Update user profile information
  */
 export const updateUserProfile = async (userData: {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  username?: string;
+  name?: string;
   bio?: string;
-  preferences?: Record<string, any>;
-}) => {
+}): Promise<UserProfile> => {
+  const snapshot = readSession();
   try {
-    const response = await api.put('/v1/users/update', userData);
+    const response = await api.put<UserProfile>('/v1/users/update', userData);
+    const current = readSession();
+    if (snapshot && current?.id === snapshot.id && current.user.mongoId === response.data._id) {
+      updateSessionUser({ ...current.user, name: response.data.name, email: response.data.email }, snapshot.id);
+    }
     return response.data;
   } catch (error) {
     console.error('Error updating user profile:', error);
@@ -336,10 +219,18 @@ export const updateUserPassword = async (passwordData: {
   newPassword: string;
   confirmPassword: string;
 }) => {
+  const sessionId = readSession()?.id;
   try {
     const response = await api.put('/v1/users/update/password', passwordData);
+    if (sessionId && response.data.code === 'password_updated') passwordChanged(sessionId);
     return response.data;
   } catch (error) {
+    if (sessionId && error instanceof Error && 'response' in error) {
+      const failure = error as Error & { response?: { data?: { code?: string } } };
+      if (failure.response?.data?.code === 'password_changed_revocation_failed') {
+        passwordChanged(sessionId, true);
+      }
+    }
     console.error('Error updating password:', error);
     throw error;
   }
@@ -348,9 +239,11 @@ export const updateUserPassword = async (passwordData: {
 /**
  * Fetch public leagues
  */
-export const fetchPublicLeagues = async (): Promise<League[]> => {
+export const fetchPublicLeagues = async (page = 1, pageSize = 9, query = ''): Promise<LeagueDiscoveryPage> => {
   try {
-    const response = await api.get('/v1/leagues/all');
+    const response = await api.get<LeagueDiscoveryPage>('/v1/leagues/discovery', {
+      params: { page, page_size: pageSize, q: query.trim() },
+    });
     return response.data;
   } catch (error) {
     console.error('Error fetching public leagues:', error);
@@ -361,13 +254,23 @@ export const fetchPublicLeagues = async (): Promise<League[]> => {
 /**
  * Invite players to join a league
  */
-export const invitePlayersToLeague = async (league_id: string, emails: string[]): Promise<void> => {
+export const invitePlayersToLeague = async (league_id: string, emails: string[]): Promise<SentLeagueInvite[]> => {
   try {
-    await api.post(`/v1/invites`, { league_id, emails });
+    const response = await api.post<SentLeagueInvite[]>(`/v1/invites`, { league_id, emails });
+    return response.data;
   } catch (error) {
     console.error('Error inviting players to league:', error);
     throw error;
   }
+};
+
+export const fetchSentLeagueInvites = async (leagueId: string): Promise<SentLeagueInvite[]> => {
+  const response = await api.get<SentLeagueInvite[]>('/v1/invites/sent', { params: { league_id: leagueId } });
+  return response.data;
+};
+
+export const retryInvitationEmail = async (inviteId: string): Promise<void> => {
+  await api.post(`/v1/invites/${encodeURIComponent(inviteId)}/retry-email`);
 };
 
 /**
@@ -377,30 +280,7 @@ export const processRaceScreenshot = async (
   image: File, 
   leagueId: string, 
   raceId: string
-): Promise<{
-  results: Array<{
-    driverId: string;
-    position: number;
-    dnf?: boolean;
-    fastestLap?: boolean;
-  }>;
-}> => {
-  try {
-    const formData = new FormData();
-    formData.append('images', image);
-
-    const response = await api.post(`/v1/leagues/${leagueId}/races/${raceId}/extract-results`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error('Error processing race screenshot:', error);
-    throw error;
-  }
-};
+): Promise<ImageExtractionResponse> => processMultipleRaceScreenshots([image], leagueId, raceId);
 
 /**
  * Process multiple race screenshots with AI to extract race results (max 2 images)
@@ -409,48 +289,32 @@ export const processMultipleRaceScreenshots = async (
   images: File[], 
   leagueId: string, 
   raceId: string
-): Promise<{
-  results: Array<{
-    driverId: string;
-    position: number;
-    dnf?: boolean;
-    fastestLap?: boolean;
-  }>;
-}> => {
-  try {
-    // Limit to 2 images as per backend constraint
-    const limitedImages = images.slice(0, 2);
-    
-    const formData = new FormData();
-    limitedImages.forEach((image) => {
-      formData.append('images', image);
-    });
-
-    const response = await api.post(`/v1/leagues/${leagueId}/races/${raceId}/extract-results`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error('Error processing multiple race screenshots:', error);
-    throw error;
-  }
+): Promise<ImageExtractionResponse> => {
+  const validation = validateScreenshots(images);
+  if (validation) throw new Error(validation);
+  const formData = new FormData();
+  images.forEach(image => formData.append('images', image));
+  const response = await api.post<ImageExtractionResponse>(
+    `/v1/leagues/${encodeURIComponent(leagueId)}/races/${encodeURIComponent(raceId)}/extract-results`, formData,
+    { headers: { 'Content-Type': undefined }, timeout: 60000 },
+  );
+  return response.data;
 };
 
-export const reset_password = async (email: string): Promise<void> => {
+export const reset_password = async (email: string): Promise<AccountEmailResponse> => {
   try {
-    await api.post('/v1/auth/reset-password', { email });
+    const response = await api.post<AccountEmailResponse>('/v1/auth/reset-password', { email });
+    return response.data;
   } catch (error) {
     console.error('Error requesting password reset:', error);
     throw error;
   }
 };
 
-export const verification_email = async (email: string): Promise<void> => {
+export const verification_email = async (email: string): Promise<AccountEmailResponse> => {
   try {
-    await api.post('/v1/auth/verification-email', { email });
+    const response = await api.post<AccountEmailResponse>('/v1/auth/verification-email', { email });
+    return response.data;
   } catch (error) {
     console.error('Error requesting email verification:', error);
     throw error;

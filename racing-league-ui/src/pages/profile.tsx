@@ -69,6 +69,7 @@ const ProfilePage: React.FC = () => {
   const [message, setMessage] = useState({ type: '', text: '' });
 
   useEffect(() => {
+    let cancelled = false;
     const checkAuthAndLoadProfile = async () => {
       // Check if user is authenticated
       if (!isAuthenticated()) {
@@ -85,6 +86,7 @@ const ProfilePage: React.FC = () => {
       // Proceed with loading profile data
       try {
         const data = await fetchUserProfile();
+        if (cancelled) return;
         setProfile(data);
         setFormData({
           name: data.name || '',
@@ -93,15 +95,17 @@ const ProfilePage: React.FC = () => {
         });
         setIsLoading(false);
       } catch (error) {
+        if (cancelled) return;
         setMessage({
           type: 'error',
-          text: 'Failed to load profile. Please try again.',
+          text: error instanceof Error ? error.message : 'Failed to load profile. Please try again.',
         });
         setIsLoading(false);
       }
     };
 
     checkAuthAndLoadProfile();
+    return () => { cancelled = true; };
   }, [navigate]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -130,7 +134,9 @@ const ProfilePage: React.FC = () => {
     
     try {
       setIsLoading(true);
-      await updateUserProfile(formData);
+      const saved = await updateUserProfile({ name: formData.name, bio: formData.bio });
+      setProfile(saved);
+      setFormData({ name: saved.name, email: saved.email, bio: saved.bio });
       setMessage({
         type: 'success',
         text: 'Profile updated successfully!',
@@ -138,7 +144,7 @@ const ProfilePage: React.FC = () => {
     } catch (error) {
       setMessage({
         type: 'error',
-        text: 'Failed to update profile. Please try again.',
+        text: error instanceof Error ? error.message : 'Failed to update profile. Please try again.',
       });
     } finally {
       setIsLoading(false);
@@ -173,7 +179,7 @@ const ProfilePage: React.FC = () => {
     } catch (error) {
       setMessage({
         type: 'error',
-        text: 'Failed to update password. Please ensure your current password is correct.',
+        text: error instanceof Error ? error.message : 'Failed to update password. Please try again.',
       });
     } finally {
       setIsLoading(false);
@@ -191,6 +197,15 @@ const ProfilePage: React.FC = () => {
       >
         <CircularProgress color="primary" size={60} />
       </Box>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <Container maxWidth="sm" sx={{ py: 4 }}>
+        <Alert severity="error">{message.text || 'Your profile could not be loaded.'}</Alert>
+        <Button sx={{ mt: 2 }} onClick={() => window.location.reload()}>Retry loading profile</Button>
+      </Container>
     );
   }
 
@@ -292,6 +307,8 @@ const ProfilePage: React.FC = () => {
                       fullWidth
                       label="Name"
                       name="name"
+                      disabled={isLoading}
+                      inputProps={{ maxLength: 100 }}
                       value={formData.name}
                       onChange={handleInputChange}
                       variant="outlined"
@@ -305,7 +322,8 @@ const ProfilePage: React.FC = () => {
                       name="email"
                       type="email"
                       value={formData.email}
-                      onChange={handleInputChange}
+                      InputProps={{ readOnly: true }}
+                      helperText="Your sign-in email cannot be changed here."
                       variant="outlined"
                       required
                       margin="normal"
@@ -317,6 +335,8 @@ const ProfilePage: React.FC = () => {
                       fullWidth
                       label="Bio"
                       name="bio"
+                      disabled={isLoading}
+                      inputProps={{ maxLength: 1000 }}
                       value={formData.bio}
                       onChange={handleInputChange}
                       variant="outlined"
@@ -356,6 +376,7 @@ const ProfilePage: React.FC = () => {
                       fullWidth
                       label="Current Password"
                       name="currentPassword"
+                      disabled={isLoading}
                       type="password"
                       value={passwordData.currentPassword}
                       onChange={handlePasswordChange}
@@ -368,6 +389,9 @@ const ProfilePage: React.FC = () => {
                       fullWidth
                       label="New Password"
                       name="newPassword"
+                      disabled={isLoading}
+                      inputProps={{ minLength: 6, maxLength: 128 }}
+                      helperText="Use a long, unique password (6–128 characters)."
                       type="password"
                       value={passwordData.newPassword}
                       onChange={handlePasswordChange}
@@ -380,6 +404,7 @@ const ProfilePage: React.FC = () => {
                       fullWidth
                       label="Confirm New Password"
                       name="confirmPassword"
+                      disabled={isLoading}
                       type="password"
                       value={passwordData.confirmPassword}
                       onChange={handlePasswordChange}
@@ -403,25 +428,19 @@ const ProfilePage: React.FC = () => {
                   
                   <Grid item xs={12} md={6}>
                     <Paper sx={{ p: 3, bgcolor: 'rgba(0,0,0,0.2)' }}>
-                      <Typography variant="h6" gutterBottom>Password Requirements</Typography>
+                      <Typography variant="h6" gutterBottom>Password Tips</Typography>
                       <Typography variant="body2" paragraph>
-                        For your security, please ensure your password:
+                        For your security, choose a long password you do not use elsewhere.
                       </Typography>
                       <ul>
                         <Typography component="li" variant="body2">
-                          Is at least 8 characters long
+                          Prefer 12 or more characters
                         </Typography>
                         <Typography component="li" variant="body2">
-                          Contains at least one uppercase letter
+                          Avoid names and other easily guessed information
                         </Typography>
                         <Typography component="li" variant="body2">
-                          Contains at least one lowercase letter
-                        </Typography>
-                        <Typography component="li" variant="body2">
-                          Contains at least one number
-                        </Typography>
-                        <Typography component="li" variant="body2">
-                          Contains at least one special character
+                          Use a password manager to generate and store it
                         </Typography>
                       </ul>
                     </Paper>

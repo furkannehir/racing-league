@@ -35,7 +35,7 @@ class League:
             "updated_at": self.updated_at,
         }
 
-    def save(self):
+    def save(self, session=None):
         """Insert a new league"""
         self.updated_at = datetime.now(timezone.utc)
         doc = {
@@ -51,10 +51,10 @@ class League:
             "updated_at": self.updated_at,
             "deleted_at": self.deleted_at,
         }
-        result = db.leagues.insert_one(doc)
+        result = db.leagues.insert_one(doc, session=session)
         self._id = result.inserted_id
 
-    def update(self):
+    def update(self, session=None):
         """Update an existing league"""
         self.updated_at = datetime.now(timezone.utc)
         db.leagues.update_one(
@@ -68,12 +68,12 @@ class League:
                 "fastest_lap_point": self.fastest_lap_point,
                 "invite_code": self.invite_code,
                 "updated_at": self.updated_at,
-            }}
+            }}, session=session
         )
 
     @staticmethod
-    def get_by_id(league_id):
-        doc = db.leagues.find_one({"_id": ObjectId(league_id), "deleted_at": None})
+    def get_by_id(league_id, session=None):
+        doc = db.leagues.find_one({"_id": ObjectId(league_id), "deleted_at": None}, session=session)
         if doc:
             return League._from_doc(doc)
         return None

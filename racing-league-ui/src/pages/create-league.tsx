@@ -112,7 +112,7 @@ const CreateLeague: React.FC = () => {
   const [formValues, setFormValues] = useState<FormValues>({
     name: '',
     max_players: 20,
-    fastestLapPoint: 1,
+    fastestLapPoint: 0,
     public: true,
     pointSystem: {...defaultPointSystem},
     calendar: [],
@@ -206,11 +206,11 @@ const CreateLeague: React.FC = () => {
   
   const addInvite = () => {
     if (!inviteEmail.trim() || !inviteEmail.includes('@')) return;
-    
-    if (!formValues.invites.includes(inviteEmail)) {
+    const normalized = inviteEmail.trim().toLowerCase();
+    if (!formValues.invites.includes(normalized)) {
       setFormValues({
         ...formValues,
-        invites: [...formValues.invites, inviteEmail.trim()]
+        invites: [...formValues.invites, normalized]
       });
     }
     
@@ -274,39 +274,15 @@ const CreateLeague: React.FC = () => {
       setIsLoading(true);
       setError(null);
       
-      // Get user email from auth
-      const userEmail = user?.email;
-      
-      if (!userEmail) {
-        setError("User email not found. Please ensure you are logged in.");
-        setIsLoading(false);
-        return;
-      }
-      
-      // Determine next race
-      const sortedCalendar = [...formValues.calendar]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      
-      const next_race = sortedCalendar.length > 0 ? sortedCalendar[0] : null;
-      
-      // Initialize participants array based on whether creator participates
-      const initialParticipants = formValues.creatorParticipates ? [userEmail] : [];
-      
-      // Create league API call with updated structure
       const createdLeague = await createLeague({
         name: formValues.name,
-        owner: userEmail,
         public: formValues.public,
         calendar: formValues.calendar || [],
         pointSystem: formValues.pointSystem,
         max_players: formValues.max_players,
         fastestLapPoint: formValues.fastestLapPoint,
-        participants: initialParticipants, 
-        participantsCount: initialParticipants.length,
+        creatorParticipates: formValues.creatorParticipates,
         invites: formValues.invites, 
-        next_race,
-        status: "active",
-        admins: [userEmail],
       });
       
       setSuccess(true);
@@ -316,8 +292,8 @@ const CreateLeague: React.FC = () => {
         navigate(`/leagues/${createdLeague._id}`);
       }, 1500);
       
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to create league. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create league. Please try again.');
       console.error('Error creating league:', err);
     } finally {
       setIsLoading(false);
@@ -380,7 +356,7 @@ const CreateLeague: React.FC = () => {
             <Grid item xs={12} md={6}>
               <TextField
                 name="max_players"
-                label="Maximum Players"
+                label="Maximum Drivers"
                 type="number"
                 fullWidth
                 value={formValues.max_players}
@@ -618,7 +594,7 @@ const CreateLeague: React.FC = () => {
           <Box sx={{ mb: 3 }}>
             <Typography variant="h6" gutterBottom>Invite Players</Typography>
             <Typography variant="body2" color="text.secondary">
-              Invite players to join your league. They'll receive an email invitation.
+              Players join after accepting. Invitation emails are queued when the league is created.
             </Typography>
           </Box>
 
@@ -706,7 +682,7 @@ const CreateLeague: React.FC = () => {
                 <Typography variant="subtitle2" color="text.secondary">League Name</Typography>
                 <Typography variant="body1" sx={{ mb: 2 }}>{formValues.name}</Typography>
                 
-                <Typography variant="subtitle2" color="text.secondary">Maximum Players</Typography>
+                <Typography variant="subtitle2" color="text.secondary">Maximum Drivers</Typography>
                 <Typography variant="body1" sx={{ mb: 2 }}>{formValues.max_players}</Typography>
                 
                 <Typography variant="subtitle2" color="text.secondary">League Type</Typography>
@@ -836,7 +812,7 @@ const CreateLeague: React.FC = () => {
               sx={{ mb: 3 }}
               icon={<CheckIcon fontSize="inherit" />}
             >
-              League created successfully! Redirecting...
+              League created successfully! {formValues.invites.length > 0 && 'Invitations are pending and email notifications are queued. '}Redirecting...
             </Alert>
           )}
           

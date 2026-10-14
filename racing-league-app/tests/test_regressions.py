@@ -27,6 +27,9 @@ config_module = types.ModuleType("src.config.config")
 config_module.Config = type("Config", (), {
     "MONGO_URI": test_uri or "mongodb://localhost", "MONGO_DB_NAME": test_db_name,
     "OPENAI_API_KEY": None, "ORIGINS": ["http://localhost"],
+    "FIREBASE_API_KEY": "test-api-key", "FIREBASE_URL": "https://identitytoolkit.googleapis.com",
+    "FRONTEND_URL": "https://frontend.example.test", "INVITATION_EMAIL_WORKER_ENABLED": False,
+    "ACCOUNT_EMAIL_WORKER_ENABLED": False,
     "init_firebase": staticmethod(lambda: None),
 })
 sys.modules[config_module.__name__] = config_module
@@ -77,8 +80,12 @@ class RegressionFixture:
         self.other.save()
         self.actor = self.owner
         self.patches = [
-            patch("firebase_admin.auth.verify_id_token", return_value={"user_id": "firebase-uid"}),
-            patch("firebase_admin.auth.get_user", side_effect=lambda uid: types.SimpleNamespace(email=self.actor.email)),
+            patch("firebase_admin.auth.verify_id_token", return_value={
+                "user_id": "firebase-uid", "email_verified": True,
+            }),
+            patch("firebase_admin.auth.get_user", side_effect=lambda uid: types.SimpleNamespace(
+                uid=uid, email=self.actor.email, email_verified=True, disabled=False,
+            )),
         ]
         if not test_uri:
             self.patches.extend([
@@ -114,6 +121,21 @@ class RegressionFixture:
         for key in ("owner", "calendar", "participants", "standings", "admins", "pointSystem", "fastestLapPoint"):
             self.assertIn(key, body)
 
+    def assert_summary_shape(self, body):
+        self.assertEqual(set(body), {
+            "_id", "name", "public", "status", "max_players", "participantsCount", "next_race"
+        })
+        if body["next_race"]:
+            self.assertEqual(set(body["next_race"]), {"track", "date"})
+        serialized = str(body)
+        self.assertNotIn(self.owner.email, serialized)
+        self.assertNotIn(self.driver.email, serialized)
+
+    def league_read_urls(self, league_id):
+        base = f"/api/v1/leagues/{league_id}"
+        return [base, base + "/standings", base + "/standings/" + self.owner.email,
+                base + "/teams", base + "/teams/standings"]
+
 class RegressionTests(RegressionFixture, unittest.TestCase):
     def test_user_lookup_supports_objectids_and_legacy_strings(self):
         self.assertEqual(User.get_user_by_id(str(self.owner._id)).email, self.owner.email)
@@ -147,13 +169,110 @@ class RegressionTests(RegressionFixture, unittest.TestCase):
             self.assertEqual(response.status_code, 400)
         self.assertEqual(League.get_by_id(str(league._id)).name, "Test League")
 
-    def test_public_listing_preserves_member_count_and_calendar(self):
+    def test_public_listings_only_return_summaries_and_hide_private_leagues(self):
         league, _ = self.make_league()
+        private, _ = self.make_league()
+        db.leagues.update_one({"_id": private._id}, {"$set": {"public": False}})
+        self.actor = self.other
+        for path, headers in (("/api/v1/leagues/all", {}), ("/api/v1/leagues/public", {}),
+                              ("/api/v1/leagues/1/10", self.headers)):
+            with self.subTest(path=path):
+                response = self.client.get(path, headers=headers)
+                self.assertEqual(response.status_code, 200)
+                summaries = response.json["leagues"] if path.endswith("/1/10") else response.json
+                self.assertEqual(len(summaries), 1)
+                self.assert_summary_shape(summaries[0])
+                self.assertEqual(summaries[0]["participantsCount"], 2)
+                self.assertEqual(summaries[0]["next_race"]["track"], "Monza")
+                self.assertEqual(summaries[0]["_id"], str(league._id))
+
+    def test_summary_with_no_upcoming_race_has_null_next_race(self):
+        LeagueService.create_league({"name": "No races", "public": True}, str(self.owner._id))
         response = self.client.get("/api/v1/leagues/all")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json[0]["participantsCount"], 2)
-        self.assertEqual(response.json[0]["next_race"]["track"], "Monza")
-        self.assertEqual(response.json[0]["_id"], str(league._id))
+        self.assert_summary_shape(response.json[0])
+        self.assertIsNone(response.json[0]["next_race"])
+
+    def test_full_reads_allow_members_of_public_and_private_leagues(self):
+        league, race = self.make_league()
+        LeagueMember(league._id, str(self.other._id), role="admin").save()
+        LeagueService.set_teams(str(league._id), {"Test Team": [self.driver.email]})
+        LeagueService.submit_race_result(str(league._id), str(race._id), {
+            self.owner.email: {"position": 1}, self.driver.email: {"position": 2}
+        })
+        for public in (True, False):
+            db.leagues.update_one({"_id": league._id}, {"$set": {"public": public}})
+            for actor in (self.owner, self.driver, self.other):
+                self.actor = actor
+                for path in self.league_read_urls(league._id):
+                    with self.subTest(public=public, actor=actor.email, path=path):
+                        response = self.client.get(path, headers=self.headers)
+                        self.assertEqual(response.status_code, 200)
+                detail = self.client.get(f"/api/v1/leagues/{league._id}", headers=self.headers)
+                self.assert_league_shape(detail.json)
+                self.assertEqual(detail.json["standings"]["overall"][self.owner.email]["points"], 25)
+                self.assertIn("Test Team", detail.json["teams"])
+
+    def test_full_reads_hide_leagues_from_nonmembers(self):
+        league, _ = self.make_league()
+        self.actor = self.other
+        for public in (True, False):
+            db.leagues.update_one({"_id": league._id}, {"$set": {"public": public}})
+            for path in self.league_read_urls(league._id):
+                with self.subTest(public=public, path=path):
+                    response = self.client.get(path, headers=self.headers)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(response.json, {"message": "League not found"})
+
+        db.leagues.update_one({"_id": league._id}, {"$set": {"public": True}})
+        joined = self.client.post(f"/api/v1/leagues/{league._id}/join", headers=self.headers)
+        self.assertEqual(joined.status_code, 200)
+        detail = self.client.get(f"/api/v1/leagues/{league._id}", headers=self.headers)
+        self.assertEqual(detail.status_code, 200)
+        self.assert_league_shape(detail.json)
+        self.assertEqual(detail.json["participantsCount"], 3)
+
+    def test_full_reads_require_auth_and_hide_deleted_or_invalid_leagues(self):
+        league, _ = self.make_league()
+        for path in self.league_read_urls(league._id):
+            with self.subTest(anonymous=path):
+                self.assertEqual(self.client.get(path).status_code, 401)
+        League.soft_delete(str(league._id))
+        for league_id in (str(league._id), str(ObjectId()), "invalid-id", "token"):
+            for path in self.league_read_urls(league_id):
+                with self.subTest(league_id=league_id, path=path):
+                    response = self.client.get(path, headers=self.headers)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(response.json, {"message": "League not found"})
+
+    def test_deleted_user_with_retained_membership_cannot_read_details(self):
+        league, _ = self.make_league()
+        self.actor = self.driver
+        User.delete_user(str(self.driver._id))
+        for path in self.league_read_urls(league._id):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path, headers=self.headers).status_code, 401)
+
+    def test_private_invite_preview_and_membership_changes_preserve_access_policy(self):
+        league, _ = self.make_league()
+        db.leagues.update_one({"_id": league._id}, {"$set": {"public": False}})
+        self.actor = self.driver
+        self.assertEqual(self.client.post(f"/api/v1/leagues/{league._id}/leave",
+                                         headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/v1/leagues/{league._id}",
+                                        headers=self.headers).status_code, 404)
+        invite = Invite(league._id, str(self.owner._id), self.driver.email)
+        invite.save()
+        preview = self.client.get("/api/v1/invites/my", headers=self.headers)
+        self.assertEqual(preview.status_code, 200)
+        self.assert_summary_shape(preview.json[0]["league"])
+        self.assertFalse(preview.json[0]["league"]["public"])
+        accepted = self.client.post(f"/api/v1/invites/{invite._id}/accept",
+                                    headers=self.headers, json={})
+        self.assertEqual(accepted.status_code, 200)
+        detail = self.client.get(f"/api/v1/leagues/{league._id}", headers=self.headers)
+        self.assertEqual(detail.status_code, 200)
+        self.assert_league_shape(detail.json)
 
     def test_invites_use_mongo_identity_and_keep_display_details(self):
         league, _ = self.make_league()
@@ -259,12 +378,15 @@ class RegressionTests(RegressionFixture, unittest.TestCase):
         self.assertEqual(list(db.teams.find({})), previous)
 
     def test_docker_entrypoint_imports_and_registers_presets(self):
-        module = importlib.import_module("app")
+        # Startup effects must be checked on a fresh import regardless of test order.
+        with patch.dict(sys.modules):
+            sys.modules.pop('app', None)
+            module = importlib.import_module("app")
         routes = {rule.rule for rule in module.app.url_map.iter_rules()}
         self.assertIn("/api/v1/point-systems", routes)
         self.assertEqual(db.point_system_presets.count_documents({}), 4)
         dockerfile = Path("Dockerfile").read_text()
-        self.assertIn('"app:app"', dockerfile)
+        self.assertIn('CMD ["gunicorn"]', dockerfile)
 
     def test_preset_seeding_is_repeatable_and_preserves_customization(self):
         from src.league_module.point_system_preset import PointSystemPreset
@@ -356,7 +478,7 @@ class MigrationTests(RegressionFixture, unittest.TestCase):
         with patch.dict(os.environ, {"PORT": "10000"}), patch("scripts.start_server.os.execvp") as execute:
             self.assertEqual(main([]), 0)
         execute.assert_called_once_with("gunicorn", [
-            "gunicorn", "--workers", "4", "--bind", "0.0.0.0:10000", "app:app"
+            "gunicorn", "--workers", "4", "--timeout", "90", "--bind", "0.0.0.0:10000", "app:app"
         ])
 
     def test_migration_dry_run_apply_and_repeat_preserve_legacy_data(self):

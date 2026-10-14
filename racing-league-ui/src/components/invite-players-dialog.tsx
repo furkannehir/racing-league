@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -20,7 +20,8 @@ import {
   Email as EmailIcon,
   Send as SendIcon,
 } from '@mui/icons-material';
-import { invitePlayersToLeague } from '../services/api';
+import { invitePlayersToLeague, fetchSentLeagueInvites, retryInvitationEmail } from '../services/api';
+import { SentLeagueInvite } from '../types/league';
 
 interface InvitePlayersDialogProps {
   open: boolean;
@@ -42,6 +43,51 @@ const InvitePlayersDialog: React.FC<InvitePlayersDialogProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sentInvites, setSentInvites] = useState<SentLeagueInvite[]>([]);
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const dialogVersion = useRef(0);
+
+  useEffect(() => {
+    if (!open) return;
+    dialogVersion.current += 1;
+    let cancelled = false;
+    let refreshing = false;
+    setMessage(null);
+    setRetrying(null);
+    setIsLoading(false);
+    setSentInvites([]);
+    const refresh = async () => {
+      if (cancelled || refreshing) return;
+      refreshing = true;
+      try {
+        const invites = await fetchSentLeagueInvites(leagueId);
+        if (!cancelled) setSentInvites(invites);
+      } catch (failure) {
+        if (!cancelled) setMessage({ type: 'error', text: failure instanceof Error ? failure.message : 'Could not load invitations.' });
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    return () => { cancelled = true; dialogVersion.current += 1; window.clearInterval(timer); };
+  }, [open, leagueId]);
+
+  const handleRetry = async (inviteId: string) => {
+    const version = dialogVersion.current;
+    setRetrying(inviteId);
+    try {
+      await retryInvitationEmail(inviteId);
+      const invites = await fetchSentLeagueInvites(leagueId);
+      if (version !== dialogVersion.current) return;
+      setSentInvites(invites);
+      setMessage({ type: 'success', text: 'Invitation email queued for retry.' });
+    } catch (failure) {
+      if (version === dialogVersion.current) setMessage({ type: 'error', text: failure instanceof Error ? failure.message : 'Could not retry the invitation email.' });
+    } finally {
+      if (version === dialogVersion.current) setRetrying(null);
+    }
+  };
 
   // Email validation regex
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -50,18 +96,19 @@ const InvitePlayersDialog: React.FC<InvitePlayersDialogProps> = ({
     if (!email.trim()) return;
     
     // Basic email validation
-    if (!emailRegex.test(email)) {
+    const normalized = email.trim().toLowerCase();
+    if (!emailRegex.test(normalized)) {
       setError('Please enter a valid email address');
       return;
     }
     
     // Check if email is already added
-    if (emails.includes(email)) {
+    if (emails.includes(normalized)) {
       setError('This email has already been added');
       return;
     }
     
-    setEmails([...emails, email]);
+    setEmails([...emails, normalized]);
     setEmail('');
     setError(null);
   };
@@ -83,31 +130,31 @@ const InvitePlayersDialog: React.FC<InvitePlayersDialogProps> = ({
       return;
     }
     
+    const version = dialogVersion.current;
     setIsLoading(true);
     setMessage(null);
     setError(null);
     
     try {
-      await invitePlayersToLeague(leagueId, emails);
+      const created = await invitePlayersToLeague(leagueId, emails);
+      if (version !== dialogVersion.current) return;
       setMessage({ 
         type: 'success',
-        text: `Successfully sent ${emails.length} invitation${emails.length > 1 ? 's' : ''}!`
+        text: `${created.length} invitation${created.length > 1 ? 's' : ''} created. Email notifications are queued; players join after accepting.`
       });
       setEmails([]);
-      
-      // Notify parent component that invites were sent
-      setTimeout(() => {
-        onInvitesSent();
-      }, 2000);
+      setSentInvites(current => Array.from(new Map([...current, ...created].map(invite => [invite._id, invite])).values()));
+      onInvitesSent();
       
     } catch (error) {
+      if (version !== dialogVersion.current) return;
       console.error('Error sending invites:', error);
       setMessage({
         type: 'error',
-        text: 'Failed to send invitations. Please try again.'
+        text: error instanceof Error ? error.message : 'Failed to create invitations. Please try again.'
       });
     } finally {
-      setIsLoading(false);
+      if (version === dialogVersion.current) setIsLoading(false);
     }
   };
 
@@ -230,6 +277,23 @@ const InvitePlayersDialog: React.FC<InvitePlayersDialogProps> = ({
             </Box>
           </>
         )}
+        <Divider sx={{ my: 3 }} />
+        <Typography variant="subtitle2" gutterBottom>Pending invitations</Typography>
+        {sentInvites.length === 0 && <Typography variant="body2">No pending invitations.</Typography>}
+        {sentInvites.map(invite => (
+          <Box key={invite._id} sx={{ py: 1, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Typography variant="body2" sx={{ flexGrow: 1 }}>{invite.invited_email}</Typography>
+            <Chip size="small" label={invite.email_status === 'sent' ? 'Email sent' :
+              invite.email_status === 'failed' ? 'Email failed' :
+              invite.email_status === 'unknown' ? 'Email status unavailable' : 'Email queued'}
+              color={invite.email_status === 'failed' ? 'warning' : 'default'} />
+            {['failed', 'unknown'].includes(invite.email_status) && (
+              <Button size="small" disabled={retrying !== null} onClick={() => handleRetry(invite._id)}>
+                {retrying === invite._id ? 'Queuing...' : 'Retry email'}
+              </Button>
+            )}
+          </Box>
+        ))}
       </DialogContent>
       
       <DialogActions sx={{ p: 2, pt: 0 }}>

@@ -26,4 +26,4 @@ EXPOSE 5000
 ENTRYPOINT ["python", "scripts/start_server.py"]
 
 # Allow deployment platforms to override Gunicorn arguments through CMD.
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
+CMD ["gunicorn"]

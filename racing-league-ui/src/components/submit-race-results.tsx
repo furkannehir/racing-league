@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -8,6 +8,7 @@ import {
   Typography,
   FormControlLabel,
   Switch,
+  Checkbox,
   CircularProgress,
   Alert,
   Box,
@@ -49,8 +50,9 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { submitRaceResult, processRaceScreenshot, processMultipleRaceScreenshots } from '../services/api';
-import { League, RaceDetails, LeagueParticipant } from '../types/league';
+import { submitRaceResult, processMultipleRaceScreenshots } from '../services/api';
+import { League, RaceDetails } from '../types/league';
+import { importImageResults, validateScreenshots, ImageDriverResult as DriverResult } from '../services/race-image-import';
 
 interface SubmitRaceResultsDialogProps {
   open: boolean;
@@ -60,25 +62,19 @@ interface SubmitRaceResultsDialogProps {
   onResultsSubmitted: (updatedLeague: League) => void;
 }
 
-interface DriverResult {
-  position: number;
-  fastestLap: boolean;
-  dnf: boolean;
-  driverId: string;
-  name: string;
-}
-
 // Sortable driver item component
 const SortableDriverItem = ({ 
   driver, 
   totalPoints,
   onDNFChange, 
-  onFastestLapChange 
+  onFastestLapChange,
+  disabled,
 }: {
   driver: DriverResult;
   totalPoints: number;
   onDNFChange: (driverId: string, isDNF: boolean) => void;
   onFastestLapChange: (driverId: string) => void;
+  disabled: boolean;
 }) => {
   const {
     attributes,
@@ -87,7 +83,7 @@ const SortableDriverItem = ({
     transform,
     transition,
     isDragging
-  } = useSortable({ id: driver.driverId, disabled: driver.dnf });
+  } = useSortable({ id: driver.driverId, disabled: disabled || driver.dnf });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -188,7 +184,7 @@ const SortableDriverItem = ({
                   onChange={() => onFastestLapChange(driver.driverId)}
                   size="small"
                   color="secondary"
-                  disabled={driver.dnf}
+                  disabled={disabled || driver.dnf}
                 />
               }
               label="Fastest Lap"
@@ -199,6 +195,7 @@ const SortableDriverItem = ({
               control={
                 <Switch
                   checked={driver.dnf}
+                  disabled={disabled}
                   onChange={(e) => onDNFChange(driver.driverId, e.target.checked)}
                   size="small"
                 />
@@ -225,6 +222,11 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   const [uploadedImages, setUploadedImages] = useState<File[]>([]);
   const [processingImages, setProcessingImages] = useState(false);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [importSummary, setImportSummary] = useState<string | null>(null);
+  const [reviewed, setReviewed] = useState(false);
+  const generation = useRef(0);
+  const operationPending = useRef(false);
+  const busy = processingImages || submitting;
   
   // Set up sensors for drag and drop
   const sensors = useSensors(
@@ -238,163 +240,85 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
     })
   );
   
-  const standings = league.standings?.overall || {};
   const pointSystem = league.pointSystem as Record<string, number> || {};
+  const raceId = selectedRace?._id;
+  const rosterKey = JSON.stringify((league.participants || []).map((driver, index) => ({
+    position: index + 1, fastestLap: false, dnf: false, driverId: driver.email,
+    name: driver.league_user_name || driver.name || league.standings?.overall?.[driver.email]?.name || driver.email,
+  })));
+  const participantKey = JSON.stringify(league.participants);
+
+  useLayoutEffect(() => {
+    const context = generation;
+    context.current++;
+    operationPending.current = false;
+    setDriverResults(open && raceId ? JSON.parse(rosterKey) : []);
+    setUploadedImages([]);
+    setProcessingImages(false);
+    setSubmitting(false);
+    setImportSummary(null);
+    setReviewed(false);
+    setError(null);
+    return () => { context.current++; };
+  }, [open, league._id, raceId, rosterKey, participantKey]);
 
   useEffect(() => {
-    if (open && selectedRace && league.participants) {
-      // Initialize driver results when dialog opens
-      const initialResults: DriverResult[] = Array.isArray(league.participants) 
-        ? league.participants.map((driver: LeagueParticipant, index) => {
-            const driverId = driver.email;
-            // Prioritize league_user_name over standings name
-            const name = driver.league_user_name || driver.name || standings[driverId]?.name || driver.email;
-            return { 
-              position: index + 1,
-              fastestLap: false,
-              dnf: false,
-              driverId,
-              name
-            };
-          })
-        : [];
-      
-      setDriverResults(initialResults);
-      // Reset upload state when dialog opens
-      setUploadedImages([]);
-      setImagePreviews([]);
-      setError(null);
-    }
-  }, [open, selectedRace, league.participants, standings]);
+    const previews = open ? uploadedImages.map(file => URL.createObjectURL(file)) : [];
+    setImagePreviews(previews);
+    return () => { previews.forEach(url => URL.revokeObjectURL(url)); };
+  }, [open, uploadedImages]);
+
+  const handleClose = () => {
+    generation.current++;
+    onClose();
+  };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (files && files.length > 0) {
-      const newFiles = Array.from(files);
-      
-      // Validate file types (only JPEG and PNG as per backend)
-      const validFiles = newFiles.filter(file => 
-        file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/jpg'
-      );
-      
-      if (validFiles.length !== newFiles.length) {
-        setError('Only JPEG and PNG files are supported. Some files were ignored.');
-      }
-      
-      // Limit to 2 images total as per backend constraint
-      const currentCount = uploadedImages.length;
-      const availableSlots = 2 - currentCount;
-      const filesToAdd = validFiles.slice(0, availableSlots);
-      
-      if (validFiles.length > availableSlots) {
-        setError(`Maximum 2 images allowed. Only the first ${availableSlots} image(s) were added.`);
-      }
-      
-      setUploadedImages(prev => [...prev, ...filesToAdd]);
-      
-      // Create previews for new files
-      filesToAdd.forEach(file => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          setImagePreviews(prev => [...prev, e.target?.result as string]);
-        };
-        reader.readAsDataURL(file);
-      });
-      
-      // Clear error if we successfully added files and no validation issues
-      if (filesToAdd.length > 0 && validFiles.length <= availableSlots && validFiles.length === newFiles.length) {
-        setError(null);
-      }
-    }
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (operationPending.current || !files.length) return;
+    const validation = validateScreenshots([...uploadedImages, ...files]);
+    if (validation) { setError(validation); return; }
+    setUploadedImages(prev => [...prev, ...files]);
+    setError(null);
   };
 
   const removeImage = (index: number) => {
+    if (operationPending.current) return;
     setUploadedImages(prev => prev.filter((_, i) => i !== index));
-    setImagePreviews(prev => prev.filter((_, i) => i !== index));
   };
 
   const processImageWithAI = async () => {
-    if (!uploadedImages.length || !selectedRace) return;
-
+    if (!open || !uploadedImages.length || !selectedRace || operationPending.current) return;
+    const requestGeneration = generation.current;
+    operationPending.current = true;
     setProcessingImages(true);
     setError(null);
-
     try {
-      let response;
-      
-      if (uploadedImages.length === 1) {
-        // Use single image API for one image
-        response = await processRaceScreenshot(
-          uploadedImages[0],
-          league._id,
-          selectedRace._id
-        );
-      } else {
-        // Use multiple images API for efficiency
-        response = await processMultipleRaceScreenshots(
-          uploadedImages,
-          league._id,
-          selectedRace._id
-        );
+      const response = await processMultipleRaceScreenshots(uploadedImages, league._id, selectedRace._id);
+      if (generation.current !== requestGeneration) return;
+      const imported = importImageResults(response, driverResults, league.participants);
+      setDriverResults(imported.drivers);
+      setImportSummary([
+        `AI identified ${imported.matched} of ${driverResults.length} drivers. Review every position, DNF, and fastest lap before submitting.`,
+        ...imported.warnings,
+      ].join(' '));
+      setReviewed(false);
+    } catch (err: unknown) {
+      if (generation.current === requestGeneration) {
+        setError(err instanceof Error ? err.message : 'Failed to process images. Please try again.');
       }
-      
-      // Parse the response if it's a string (OpenAI returns JSON string)
-      let extractedResults: any[] = [];
-      if (typeof response === 'string') {
-        try {
-          extractedResults = JSON.parse(response);
-        } catch (parseError) {
-          console.error('Failed to parse AI response:', parseError);
-          setError('Failed to parse AI response. Please try again.');
-          return;
-        }
-      } else if (Array.isArray(response)) {
-        extractedResults = response;
-      } else if (response?.results && Array.isArray(response.results)) {
-        extractedResults = response.results;
-      }
-      
-      // Map extracted results to driver results
-      if (extractedResults.length > 0) {
-        const updatedResults = driverResults.map(driver => {
-          // Try to match by driver name (case-insensitive)
-          const aiResult = extractedResults.find((result: any) => 
-            result.driver && 
-            driver.name.toLowerCase().includes(result.driver.toLowerCase()) ||
-            result.driver.toLowerCase().includes(driver.name.toLowerCase())
-          );
-          
-          if (aiResult && aiResult.position) {
-            return {
-              ...driver,
-              position: aiResult.position,
-              dnf: false, // Set default values since API doesn't provide these
-              fastestLap: false,
-            };
-          }
-          return driver;
-        });
-        
-        // Sort by position and update remaining positions
-        const sortedResults = updatedResults.sort((a, b) => a.position - b.position);
-        const finalResults = sortedResults.map((driver, index) => ({
-          ...driver,
-          position: driver.position || index + 1 // Ensure all drivers have positions
-        }));
-        
-        setDriverResults(finalResults);
-      } else {
-        setError('No race results were extracted from the images. Please check the image quality and try again.');
-      }
-    } catch (err: any) {
-      console.error('Error processing images:', err);
-      setError(err?.response?.data?.message || err?.message || 'Failed to process images');
     } finally {
-      setProcessingImages(false);
+      if (generation.current === requestGeneration) {
+        operationPending.current = false;
+        setProcessingImages(false);
+      }
     }
   };
 
   const handleDNFChange = (driverId: string, isDNF: boolean) => {
+    if (operationPending.current) return;
+    setReviewed(false);
     setDriverResults(prev => 
       prev.map(driver => {
         if (driver.driverId === driverId) {
@@ -411,18 +335,12 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   };
 
   const handleFastestLapChange = (driverId: string) => {
+    if (operationPending.current) return;
+    setReviewed(false);
     setDriverResults(prev => 
-      prev.map(driver => ({
-        ...driver,
-        // Clear all fastest laps first
-        fastestLap: false
-      })).map(driver => {
-        // Then set fastest lap for the selected driver if not DNF
-        if (driver.driverId === driverId && !driver.dnf) {
-          return { ...driver, fastestLap: true };
-        }
-        return driver;
-      })
+      prev.map(driver => ({ ...driver,
+        fastestLap: driver.driverId === driverId && !driver.dnf && !driver.fastestLap,
+      }))
     );
   };
 
@@ -436,11 +354,14 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    if (operationPending.current || !over || active.id === over.id) return;
+    setReviewed(false);
     
     if (active.id !== over?.id) {
       setDriverResults((prev) => {
         const oldIndex = prev.findIndex(driver => driver.driverId === active.id);
         const newIndex = prev.findIndex(driver => driver.driverId === over?.id);
+        if (oldIndex < 0 || newIndex < 0) return prev;
         
         const reorderedDrivers = arrayMove(prev, oldIndex, newIndex);
         
@@ -454,7 +375,9 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!selectedRace || !league._id) return;
+    if (!open || !selectedRace || !league._id || operationPending.current || (importSummary && !reviewed)) return;
+    const requestGeneration = generation.current;
+    operationPending.current = true;
     
     try {
       setSubmitting(true);
@@ -482,18 +405,23 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
         selectedRace._id, 
         formattedResults
       );
+      if (generation.current !== requestGeneration) return;
       
       // Notify parent component
       onResultsSubmitted(updatedLeague);
       
       // Close dialog
-      onClose();
+      handleClose();
       
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to submit race results. Please try again.');
-      console.error('Error submitting race results:', err);
+    } catch (err: unknown) {
+      if (generation.current === requestGeneration) {
+        setError(err instanceof Error ? err.message : 'Failed to submit race results. Please try again.');
+      }
     } finally {
-      setSubmitting(false);
+      if (generation.current === requestGeneration) {
+        operationPending.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -502,7 +430,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       maxWidth="md"
       fullWidth
       PaperProps={{
@@ -517,7 +445,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
           <TrophyIcon sx={{ mr: 1, color: 'primary.main' }} />
           Submit Race Results: {selectedRace.track}
         </Box>
-        <IconButton onClick={onClose} size="small">
+        <IconButton onClick={handleClose} size="small" aria-label="Close results dialog">
           <CloseIcon />
         </IconButton>
       </DialogTitle>
@@ -546,7 +474,8 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
           </Typography>
           
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Upload up to 2 screenshots of the race results and let AI automatically generate the race positions for you.
+            Upload up to 2 JPEG or PNG screenshots, up to 6 MiB each. AI suggests positions for your review;
+            check every driver, DNF, and fastest lap before saving.
           </Typography>
           
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -557,7 +486,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
               type="file"
               onChange={handleImageUpload}
               multiple
-              disabled={uploadedImages.length >= 2}
+              disabled={busy || uploadedImages.length >= 2}
             />
             <label htmlFor="race-screenshot-upload">
               <Button
@@ -566,7 +495,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
                 startIcon={<UploadIcon />}
                 fullWidth
                 sx={{ height: 48 }}
-                disabled={uploadedImages.length >= 2}
+                disabled={busy || uploadedImages.length >= 2}
               >
                 {uploadedImages.length >= 2 
                   ? 'Maximum 2 screenshots reached' 
@@ -601,6 +530,8 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
                       <IconButton
                         size="small"
                         onClick={() => removeImage(index)}
+                        disabled={busy}
+                        aria-label={`Remove screenshot ${index + 1}`}
                         sx={{
                           position: 'absolute',
                           top: 4,
@@ -626,7 +557,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
                 color="primary"
                 startIcon={processingImages ? <CircularProgress size={20} /> : <AIIcon />}
                 onClick={processImageWithAI}
-                disabled={processingImages}
+                disabled={busy}
                 sx={{ mt: 1 }}
               >
                 {processingImages ? `Analyzing ${uploadedImages.length} Screenshot${uploadedImages.length > 1 ? 's' : ''}...` : `Extract Results from ${uploadedImages.length} Screenshot${uploadedImages.length > 1 ? 's' : ''}`}
@@ -636,6 +567,15 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
         </Paper>
         
         <Divider sx={{ mb: 3 }} />
+        {importSummary && (
+          <Box sx={{ mb: 3 }}>
+            <Alert severity="warning">{importSummary}</Alert>
+            <FormControlLabel
+              control={<Checkbox checked={reviewed} disabled={busy} onChange={event => setReviewed(event.target.checked)} />}
+              label="I have reviewed the driver order, DNF, and fastest lap."
+            />
+          </Box>
+        )}
         
         <Box sx={{ mb: 3 }}>
           <Typography variant="body2" color="text.secondary" paragraph>
@@ -708,6 +648,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
                     totalPoints={totalPoints}
                     onDNFChange={handleDNFChange}
                     onFastestLapChange={handleFastestLapChange}
+                    disabled={busy}
                   />
                 );
               })}
@@ -717,7 +658,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 3 }}>
         <Button 
-          onClick={onClose}
+          onClick={handleClose}
           variant="outlined"
         >
           Cancel
@@ -726,7 +667,7 @@ const SubmitRaceResultsDialog: React.FC<SubmitRaceResultsDialogProps> = ({
           onClick={handleSubmit} 
           variant="contained" 
           color="primary"
-          disabled={submitting}
+          disabled={busy || driverResults.length === 0 || (!!importSummary && !reviewed)}
           startIcon={submitting && <CircularProgress size={20} />}
         >
           {submitting ? 'Submitting...' : 'Submit Results'}

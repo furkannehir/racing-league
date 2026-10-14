@@ -33,11 +33,11 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
 import { fetchPublicLeagues, joinLeague } from '../services/api';
-import { League } from '../types/league';
+import { LeagueSummary } from '../types/league';
 
 const LeagueCard: React.FC<{
-  league: League;
-  onJoin: (league: League) => void;
+  league: LeagueSummary;
+  onJoin: (league: LeagueSummary) => void;
   isUserAuthenticated: boolean;
 }> = ({ league, onJoin, isUserAuthenticated }) => {
   return (
@@ -75,7 +75,7 @@ const LeagueCard: React.FC<{
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
           <GroupIcon fontSize="small" sx={{ mr: 1, opacity: 0.7 }} />
           <Typography variant="body2" color="text.secondary">
-            {league.participantsCount || league.participants?.length || 0} / {league.max_players} participants
+            {league.participantsCount} / {league.max_players} participants
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
@@ -115,12 +115,15 @@ const FindLeaguesPage: React.FC = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth(); // Use the hook instead of the function
   const [searchQuery, setSearchQuery] = useState('');
-  const [leagues, setLeagues] = useState<League[]>([]);
-  const [filteredLeagues, setFilteredLeagues] = useState<League[]>([]);
+  const [leagues, setLeagues] = useState<LeagueSummary[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
-  const [selectedLeague, setSelectedLeague] = useState<League | null>(null);
+  const [selectedLeague, setSelectedLeague] = useState<LeagueSummary | null>(null);
   const [joinInProgress, setJoinInProgress] = useState(false);
   const [page, setPage] = useState(1);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -128,45 +131,33 @@ const FindLeaguesPage: React.FC = () => {
   const leaguesPerPage = 9;
   
   useEffect(() => {
-    const fetchLeagues = async () => {
+    let active = true;
+    setIsLoading(true);
+    setError(null);
+    const timer = setTimeout(async () => {
       try {
-        setIsLoading(true);
-        setError(null);
-        
-        // Fetch public leagues regardless of authentication status
-        const data = await fetchPublicLeagues();
-        setLeagues(data);
-        setFilteredLeagues(data);
-      } catch (error) {
-        setError('Failed to load leagues. Please try again later.');
+        const data = await fetchPublicLeagues(page, leaguesPerPage, searchQuery);
+        if (!active) return;
+        setLeagues(data.leagues);
+        setTotal(data.total);
+        setTotalPages(data.total_pages);
+        // A deletion can make the last page empty; refetch the new last page.
+        if (data.total_pages > 0 && page > data.total_pages) setPage(data.total_pages);
+      } catch {
+        if (active) setError('Failed to load leagues. Please try again.');
       } finally {
-        setIsLoading(false);
+        if (active) { setIsLoading(false); setHasLoaded(true); }
       }
-    };
-
-    fetchLeagues();
-  }, []);
-
-  // Filter leagues based on search query
-  useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setFilteredLeagues(leagues);
-      return;
-    }
-
-    const query = searchQuery.toLowerCase();
-    const filtered = leagues.filter(league => 
-      league.name.toLowerCase().includes(query)
-    );
-    setFilteredLeagues(filtered);
-    setPage(1);
-  }, [searchQuery, leagues]);
+    }, 250);
+    return () => { active = false; clearTimeout(timer); };
+  }, [page, searchQuery, reloadVersion]);
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(event.target.value);
+    setPage(1);
   };
 
-  const handleJoinLeague = (league: League) => {
+  const handleJoinLeague = (league: LeagueSummary) => {
     // If user is not authenticated, redirect to login
     if (!isAuthenticated) {
       navigate('/login', { 
@@ -202,13 +193,6 @@ const FindLeaguesPage: React.FC = () => {
           : league
       );
       setLeagues(updatedLeagues);
-      setFilteredLeagues(
-        filteredLeagues.map(league => 
-          league._id === selectedLeague._id 
-            ? { ...league, participantsCount: (league.participantsCount || 0) + 1 } 
-            : league
-        )
-      );
       
       // Close dialog
       setJoinDialogOpen(false);
@@ -218,7 +202,7 @@ const FindLeaguesPage: React.FC = () => {
         navigate(`/leagues/${selectedLeague._id}`);
       }, 1500);
       
-    } catch (error) {
+    } catch {
       setMessage({
         type: 'error',
         text: 'Failed to join league. You may already be a member or the league is full.'
@@ -234,14 +218,7 @@ const FindLeaguesPage: React.FC = () => {
     setSelectedLeague(null);
   };
 
-  const paginatedLeagues = filteredLeagues.slice(
-    (page - 1) * leaguesPerPage, 
-    page * leaguesPerPage
-  );
-
-  const totalPages = Math.ceil(filteredLeagues.length / leaguesPerPage);
-
-  if (isLoading) {
+  if (isLoading && !hasLoaded) {
     return (
       <Box 
         sx={{
@@ -367,7 +344,7 @@ const FindLeaguesPage: React.FC = () => {
         
         {/* Error display */}
         {error && (
-          <Alert severity="error" sx={{ mb: 4 }}>
+          <Alert severity="error" sx={{ mb: 4 }} action={<Button onClick={() => setReloadVersion(value => value + 1)}>Retry</Button>}>
             {error}
           </Alert>
         )}
@@ -389,6 +366,7 @@ const FindLeaguesPage: React.FC = () => {
               value={searchQuery}
               onChange={handleSearchChange}
               variant="outlined"
+              inputProps={{ maxLength: 100 }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -410,12 +388,12 @@ const FindLeaguesPage: React.FC = () => {
           }}
         >
           <Typography variant="body1">
-            Found {filteredLeagues.length} {filteredLeagues.length === 1 ? 'league' : 'leagues'}
+            {isLoading ? 'Searching...' : error ? 'League search unavailable' : `Found ${total} ${total === 1 ? 'league' : 'leagues'}`}
           </Typography>
         </Box>
 
         {/* Leagues grid */}
-        {filteredLeagues.length === 0 ? (
+        {isLoading ? <Box role="status" sx={{ textAlign: 'center', p: 4 }}><CircularProgress /></Box> : error ? null : leagues.length === 0 ? (
           <Paper
             sx={{
               p: 6,
@@ -432,7 +410,7 @@ const FindLeaguesPage: React.FC = () => {
         ) : (
           <>
             <Grid container spacing={3}>
-              {paginatedLeagues.map((league) => (
+              {leagues.map((league) => (
                 <Grid item key={league._id} xs={12} sm={6} md={4}>
                   <LeagueCard 
                     league={league} 

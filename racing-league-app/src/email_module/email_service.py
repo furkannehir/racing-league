@@ -1,8 +1,10 @@
 from mailersend import MailerSendClient, EmailRequest, EmailContact
 from src.config.config import Config
 from src.auth_module.auth_service import AuthService
+import logging
 
-email_client = MailerSendClient(api_key=Config.MAILER_SENDER_API_KEY)
+email_client = MailerSendClient(api_key=Config.MAILER_SENDER_API_KEY, timeout=10, max_retries=0)
+logger = logging.getLogger(__name__)
 
 class EmailService:
     
@@ -20,17 +22,14 @@ class EmailService:
         )
         try:
             response = email_client.emails.send(email_request)
-            print(f"Email sent successfully: {response}")
             return response
-        except Exception as e:
-            print(f"Failed to send email: {str(e)}")
+        except Exception:
+            logger.warning("Email provider request failed")
+            return None
 
     @staticmethod
     def send_verification_email(to_email: str, name: str):
         url = AuthService.generate_verification_link(to_email)
-        if "Error" in url:
-            print(f"Failed to generate verification link: {url}")
-            return
         subject = "Please verify your email address"
         template_id = Config.EMAIL_TEMPLATE_ID
         variables = {
@@ -40,7 +39,7 @@ class EmailService:
             "message_bottom": "If you experience any issues with the button, you can verify your email using the link below.",
             "button_name": "Verify my email"
         }
-        response = EmailService.send_email(
+        return EmailService.send_email(
             to_email= EmailContact(email=to_email, name=name),
             subject=subject,
             template_id=template_id,
@@ -50,9 +49,6 @@ class EmailService:
     @staticmethod
     def send_reset_password_email(to_email: str, name: str):
         url = AuthService.generate_reset_password_link(to_email)
-        if "Error" in url:
-            print(f"Failed to generate verification link: {url}")
-            return
         subject = "Password Reset Request"
         template_id = Config.EMAIL_TEMPLATE_ID
         variables = {
@@ -63,7 +59,7 @@ class EmailService:
             "message_bottom": "If you experience any issues with the button, you can reset your password using the link below.",
             "button_name": "Reset my password"
         }
-        EmailService.send_email(
+        return EmailService.send_email(
             to_email=EmailContact(email=to_email, name=name),
             subject=subject,
             template_id=template_id,
@@ -80,7 +76,7 @@ class EmailService:
             "message_bottom": message_bottom,
             "button_name": button_name
         }
-        EmailService.send_email(
+        return EmailService.send_email(
             to_email=EmailContact(email=to_email, name=name),
             subject=subject,
             template_id=template_id,

@@ -1,10 +1,8 @@
 export interface UserProfile {
-    id: string;
-    username: string;
+    _id: string;
+    name: string;
     email: string;
-    firstName: string;
-    lastName: string;
-    bio?: string;
-    preferences?: Record<string, any>;
-    createdAt: string;
+    bio: string;
+    created_at: string;
+    updated_at: string | null;
 }

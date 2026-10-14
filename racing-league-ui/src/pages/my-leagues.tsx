@@ -260,7 +260,7 @@ const MyLeagues: React.FC = () => {
                         </Box>
                         
                         <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                          <Chip size="small" label={`${invite.league.participantsCount || 0} Members`} />
+                          <Chip size="small" label={`${invite.league.participantsCount || 0} Drivers`} />
                           <Chip 
                             size="small" 
                             color="primary" 
@@ -336,7 +336,7 @@ const MyLeagues: React.FC = () => {
                     <TableHead>
                       <TableRow>
                         <TableCell>League Name</TableCell>
-                        <TableCell align="center">Members</TableCell>
+                        <TableCell align="center">Drivers</TableCell>
                         <TableCell align="center">Your Position</TableCell>
                         <TableCell align="center">Next Race</TableCell>
                         <TableCell align="center">Status</TableCell>
@@ -373,7 +373,7 @@ const MyLeagues: React.FC = () => {
                             </TableCell>
                             <TableCell align="center">{league.participantsCount}</TableCell>
                             <TableCell align="center">
-                              {league.position ? (
+                              {league.isParticipating === false ? <Chip label="Not racing" size="small" /> : league.position ? (
                                 <Chip 
                                   label={`#${league.position}`} 
                                   color={league.position === 1 ? 'success' : 'default'} 
@@ -478,7 +478,8 @@ const MyLeagues: React.FC = () => {
                           </b>
                         </Typography>
                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip size="small" label={`${topLeague.participantsCount} Members`} />
+                          <Chip size="small" label={`${topLeague.participantsCount} Drivers`} />
+                          {topLeague.isParticipating === false && <Chip size="small" label="Not racing" />}
                           <Chip size="small" color="primary" label={`Status: ${topLeague.status}`} />
                           {topLeague.position && (
                             <Chip 

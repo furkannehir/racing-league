@@ -6,10 +6,11 @@ from src.league_module.race_result import RaceResult
 from src.league_module.team import Team
 from src.user_module.user import User
 from src.config.config import Config
+from src.config import mongo
+from src.invite_module.invite import Invite
+from src.invite_module.invite_service import InviteService
 from datetime import datetime, timezone
-import tempfile
-from io import BytesIO
-import base64
+import re
 
 client = None
 
@@ -21,7 +22,7 @@ def get_openai_client():
             from openai import OpenAI
             if not Config.OPENAI_API_KEY:
                 raise ValueError("OPENAI_API_KEY not found in environment variables")
-            client = OpenAI(api_key=Config.OPENAI_API_KEY)
+            client = OpenAI(api_key=Config.OPENAI_API_KEY, timeout=20, max_retries=0)
         except ImportError as e:
             raise ImportError(f"OpenAI package not installed: {e}")
         except Exception as e:
@@ -48,7 +49,7 @@ class LeagueService:
     @staticmethod
     def create_league(data, owner_id):
         """
-        Create a new league and add owner as first member.
+        Validate the complete creation request, then commit its related records.
         owner_id: MongoDB user _id (string)
         """
         owner_user = User.get_user_by_id(owner_id)
@@ -67,60 +68,149 @@ class LeagueService:
         LeagueService.validate_settings(
             league.name, league.max_players, league.fastest_lap_point, league.point_system
         )
-        league.save()
+        participates = data.get("creatorParticipates", True)
+        if type(participates) is not bool or type(league.public) is not bool:
+            raise ValueError("Visibility and creator participation must be booleans")
+        invite_emails = InviteService.normalize_emails(data.get("invites", []))
+        if owner_user.email.casefold() in invite_emails:
+            raise ValueError("The owner is already a member; invite other players")
 
-        # Add owner as first member
-        member = LeagueMember(
-            league_id=league._id,
-            user_id=owner_id,
-            role="owner",
-            display_name=owner_user.name or owner_user.email,
-        )
-        member.save()
-
-        # Create races if calendar provided
         calendar = data.get("calendar", [])
+        if not isinstance(calendar, list):
+            raise ValueError("Calendar must be a list")
+        prepared_races = []
         for race_data in calendar:
+            if not isinstance(race_data, dict) or not isinstance(race_data.get("track"), str) or not race_data['track'].strip():
+                raise ValueError("Every calendar race needs a track")
             date = race_data.get("date")
             if isinstance(date, str):
                 try:
-                    if date.endswith('Z'):
-                        date = datetime.fromisoformat(date.replace('Z', '+00:00'))
-                    else:
-                        date = datetime.fromisoformat(date)
-                        if not date.tzinfo:
-                            date = date.replace(tzinfo=timezone.utc)
-                except (ValueError, TypeError):
-                    date = datetime.now(timezone.utc)
+                    date = datetime.fromisoformat(date.replace('Z', '+00:00'))
+                except ValueError as exc:
+                    raise ValueError("Every calendar race needs a valid date") from exc
+            if not isinstance(date, datetime):
+                raise ValueError("Every calendar race needs a valid date")
+            date = date if date.tzinfo else date.replace(tzinfo=timezone.utc)
+            status = race_data.get("status", "Upcoming")
+            if status not in ("Upcoming", "Completed", "Cancelled"):
+                raise ValueError("Invalid race status")
+            prepared_races.append((race_data['track'].strip(), date, status))
 
-            race = Race(
-                league_id=league._id,
-                track=race_data.get("track"),
-                date=date,
-                status=race_data.get("status", "Upcoming"),
-            )
-            race.save()
+        def persist(session):
+            league.save(session=session)
+            LeagueMember(league._id, owner_id, role="owner",
+                         display_name=owner_user.name or owner_user.email,
+                         is_participating=participates).save(session=session)
+            for track, date, status in prepared_races:
+                Race(league._id, track, date, status=status).save(session=session)
+            # Invitation rows also hold durable delivery work. No mail is sent here.
+            for email in invite_emails:
+                Invite(league._id, owner_id, email).save(session=session)
+            return league
 
-        return league
+        return mongo.run_transaction(persist)
 
     @staticmethod
-    def update_league(league, data):
-        """Update league core settings"""
-        league.name = data.get("name", league.name)
-        league.public = data.get("public", league.public)
-        league.max_players = data.get("max_players", league.max_players)
-        league.fastest_lap_point = data.get("fastest_lap_point",
-                                            data.get("fastestLapPoint", league.fastest_lap_point))
-        if "point_system" in data:
-            league.point_system = data["point_system"]
-        elif "pointSystem" in data:
-            league.point_system = data["pointSystem"]
-        LeagueService.validate_settings(
-            league.name, league.max_players, league.fastest_lap_point, league.point_system,
-            LeagueMember.get_member_count(str(league._id))
-        )
-        league.update()
-        return league
+    def update_league(league, data, actor_id=None):
+        """Update settings and an owner's participation without racing capacity checks."""
+        if 'creatorParticipates' in data and actor_id != league.owner_id:
+            raise ValueError("Only the owner can change their participation")
+
+        def persist(session):
+            current = LeagueMember.lock_league(str(league._id), session)
+            current.name = data.get("name", current.name)
+            current.public = data.get("public", current.public)
+            current.max_players = data.get("max_players", current.max_players)
+            current.fastest_lap_point = data.get("fastest_lap_point", data.get("fastestLapPoint", current.fastest_lap_point))
+            current.point_system = data.get("point_system", data.get("pointSystem", current.point_system))
+            if type(current.public) is not bool:
+                raise ValueError("Visibility must be a boolean")
+            count = LeagueMember.get_participant_count(str(league._id), session=session)
+            owner_member = LeagueMember.get_member(str(league._id), current.owner_id, session=session)
+            if 'creatorParticipates' in data:
+                participates = data['creatorParticipates']
+                if type(participates) is not bool or not owner_member:
+                    raise ValueError("Creator participation must be a boolean")
+                if participates != owner_member.is_participating:
+                    if not participates:
+                        if mongo.db.race_results.find_one({'league_id': current._id, 'user_id': current.owner_id}, session=session):
+                            raise ValueError("Correct existing driver results before opting out of participation")
+                        if mongo.db.teams.find_one({'league_id': current._id, 'member_ids': current.owner_id}, session=session):
+                            raise ValueError("Remove yourself from teams before opting out of participation")
+                    count += 1 if participates else -1
+                    owner_member.is_participating = participates
+                    owner_member.update(session=session)
+            LeagueService.validate_settings(current.name, current.max_players,
+                current.fastest_lap_point, current.point_system, count)
+            current.update(session=session)
+            return current
+
+        return mongo.run_transaction(persist)
+
+    @staticmethod
+    def get_league_summary(league):
+        """Expose discovery and invitation fields without member information."""
+        league_id = str(league._id)
+        next_race = Race.get_next_race(league_id)
+        return {
+            "_id": league_id,
+            "name": league.name,
+            "public": league.public,
+            "status": league.status,
+            "max_players": league.max_players,
+            "participantsCount": LeagueMember.get_participant_count(league_id),
+            "next_race": {
+                "track": next_race.track,
+                "date": next_race.serialize()["date"],
+            } if next_race else None,
+        }
+
+    @staticmethod
+    def get_public_league_page(page=1, page_size=10, query=""):
+        """Bound responses and batch related counts/races independently of page length."""
+        if type(page) is not int or page < 1:
+            raise ValueError("Page must be a positive integer")
+        if type(page_size) is not int or not 1 <= page_size <= 50:
+            raise ValueError("Page size must be between 1 and 50")
+        if not isinstance(query, str) or len(query) > 100:
+            raise ValueError("Search must be 100 characters or fewer")
+        match = {"public": True, "deleted_at": None}
+        if query.strip():
+            match['name'] = {"$regex": re.escape(query.strip()), "$options": "i"}
+        total = mongo.db.leagues.count_documents(match)
+        documents = list(mongo.db.leagues.find(match, {
+            "name": 1, "public": 1, "status": 1, "max_players": 1,
+        }).sort([("created_at", -1), ("_id", -1)]).skip((page - 1) * page_size).limit(page_size)) if (page - 1) * page_size < total else []
+        ids = [doc['_id'] for doc in documents]
+        counts = {}
+        upcoming = {}
+        if ids:
+            counts = {row['_id']: row['count'] for row in mongo.db.league_members.aggregate([
+                {"$match": {"league_id": {"$in": ids}, "is_participating": {"$ne": False}}},
+                {"$group": {"_id": "$league_id", "count": {"$sum": 1}}},
+            ])}
+            upcoming = {row['_id']: row for row in mongo.db.races.aggregate([
+                {"$match": {"league_id": {"$in": ids}, "status": "Upcoming",
+                            "date": {"$gt": datetime.now(timezone.utc)}}},
+                {"$sort": {"date": 1, "_id": 1}},
+                {"$group": {"_id": "$league_id", "track": {"$first": "$track"}, "date": {"$first": "$date"}}},
+            ])}
+        summaries = []
+        for doc in documents:
+            race = upcoming.get(doc['_id'])
+            if race:
+                date = race['date']
+                date = date if date.tzinfo else date.replace(tzinfo=timezone.utc)
+                next_race = {"track": race['track'], "date": date.isoformat()}
+            else:
+                next_race = None
+            summaries.append({
+                "_id": str(doc['_id']), "name": doc.get('name'), "public": True,
+                "status": doc.get('status', 'active'), "max_players": doc.get('max_players', 20),
+                "participantsCount": counts.get(doc['_id'], 0), "next_race": next_race,
+            })
+        return {"leagues": summaries, "page": page, "page_size": page_size, "total": total,
+                "total_pages": (total + page_size - 1) // page_size}
 
     @staticmethod
     def get_league_detail(league_id):
@@ -136,6 +226,8 @@ class LeagueService:
         members = LeagueMember.get_members(league_id)
         races = Race.get_by_league(league_id)
         standings_list = RaceResult.get_standings(league_id, result_type="race")
+        nonparticipants = {m.user_id for m in members if not m.is_participating}
+        standings_list = [s for s in standings_list if s['user_id'] not in nonparticipants]
         teams = Team.get_by_league(league_id)
         next_race = Race.get_next_race(league_id)
 
@@ -154,7 +246,8 @@ class LeagueService:
                 "league_user_name": m.display_name or (user.name if user else ""),
                 "id": m.user_id,
             }
-            participants.append(participant)
+            if m.is_participating:
+                participants.append(participant)
             if m.role in ("owner", "admin"):
                 admins.append(user.email if user else m.user_id)
 
@@ -169,6 +262,7 @@ class LeagueService:
             user = users_map.get(s["user_id"])
             email = user.email if user else s["user_id"]
             standings["overall"][email] = {
+                "position": s["position"],
                 "points": s["points"],
                 "wins": s["wins"],
                 "podiums": s["podiums"],
@@ -182,6 +276,8 @@ class LeagueService:
                 race_results = RaceResult.get_by_race(str(race._id), result_type="race")
                 race_standings = {}
                 for rr in race_results:
+                    if rr.user_id in nonparticipants:
+                        continue
                     user = users_map.get(rr.user_id)
                     email = user.email if user else rr.user_id
                     race_standings[email] = {
@@ -233,18 +329,19 @@ class LeagueService:
                 "total_fastest_laps": total_fastest_laps,
                 "member_details": team_member_details,
             }
+        LeagueService.rank_teams(teams_dict)
 
         # Find owner email
-        owner_email = next(
-            (p["email"] for p in participants
-             if p["id"] == league.owner_id and p["email"]), league.owner_id
-        )
+        owner_user = users_map.get(league.owner_id) or User.get_user_by_id(league.owner_id)
+        owner_email = owner_user.email if owner_user else league.owner_id
+        owner_participates = next((m.is_participating for m in members if m.user_id == league.owner_id), True)
 
         # Compose response — use frontend-compatible key names only
         result = {
             "_id": str(league._id),
             "name": league.name,
             "owner": owner_email,
+            "creatorParticipates": owner_participates,
             "public": league.public,
             "status": league.status,
             "max_players": league.max_players,
@@ -283,7 +380,7 @@ class LeagueService:
             # Get position for this league
             standings = RaceResult.get_standings(str(league._id), result_type="race")
             position = None
-            for s in standings:
+            for s in standings if membership.is_participating else []:
                 if s["user_id"] == user_id:
                     position = s["position"]
                     break
@@ -312,7 +409,8 @@ class LeagueService:
                 "fastestLapPoint": league.fastest_lap_point,
                 "created_at": league.created_at,
                 "updated_at": league.updated_at,
-                "participantsCount": LeagueMember.get_member_count(str(league._id)),
+                "participantsCount": LeagueMember.get_participant_count(str(league._id)),
+                "isParticipating": membership.is_participating,
                 "position": position,
                 "next_race": next_race.serialize() if next_race else None,
                 "participants": [],
@@ -363,8 +461,8 @@ class LeagueService:
             user = User.get_user_by_mail(driver_email)
             if not user:
                 raise Exception(f"User with email {driver_email} not found")
-            if not LeagueMember.is_member(league_id, str(user._id)):
-                raise ValueError(f"Participant {driver_email} is not in the league")
+            if not LeagueMember.is_participant(league_id, str(user._id)):
+                raise ValueError(f"User {driver_email} is not a participating driver")
             if not isinstance(result_data, dict):
                 raise ValueError("Each driver result must be an object")
 
@@ -410,6 +508,8 @@ class LeagueService:
             raise Exception("League not found")
 
         standings = RaceResult.get_standings(league_id, result_type="race")
+        excluded = {m.user_id for m in LeagueMember.get_members(league_id) if not m.is_participating}
+        standings = [s for s in standings if s['user_id'] not in excluded]
 
         # Enrich with user details
         user_ids = [s["user_id"] for s in standings]
@@ -445,8 +545,8 @@ class LeagueService:
                 if not isinstance(member_ref, str):
                     raise ValueError("Team members must be emails or user IDs")
                 user = User.get_user_by_mail(member_ref) or User.get_user_by_id(member_ref)
-                if not user or not LeagueMember.is_member(league_id, str(user._id)):
-                    raise ValueError(f"User '{member_ref}' is not a league member")
+                if not user or not LeagueMember.is_participant(league_id, str(user._id)):
+                    raise ValueError(f"User '{member_ref}' is not a participating driver")
                 mid = str(user._id)
                 if mid in assigned:
                     raise ValueError("A member can belong to only one team")
@@ -510,7 +610,16 @@ class LeagueService:
 
             teams_result[team.name] = team_stats
 
+        LeagueService.rank_teams(teams_result)
         return teams_result
+
+    @staticmethod
+    def rank_teams(teams):
+        ordered = sorted(teams.items(), key=lambda entry: (
+            -entry[1]['total_points'], -entry[1]['total_wins'],
+            -entry[1]['total_podiums'], entry[0]))
+        for position, (_, stats) in enumerate(ordered, 1):
+            stats['position'] = position
 
     @staticmethod
     def get_team_standings(league_id):
@@ -519,8 +628,7 @@ class LeagueService:
 
         sorted_teams = sorted(
             [{"name": name, **stats} for name, stats in teams.items()],
-            key=lambda x: (x["total_points"], x["total_wins"], x["total_podiums"]),
-            reverse=True,
+            key=lambda x: x["position"],
         )
 
         for i, team in enumerate(sorted_teams):
@@ -539,81 +647,7 @@ class LeagueService:
         raise Exception("Team not found")
 
     @staticmethod
-    def extract_race_results(image_files):
-        """Extract race results from images using OpenAI"""
-        image_data = []
-        temp_files = []
-
-        for file in image_files:
-            temp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-            file.save(temp.name)
-            temp_files.append(temp.name)
-
-            buffer = BytesIO()
-            file.save(buffer, format="JPEG")
-            buffer.seek(0)
-            encoded_image = base64.b64encode(buffer.read()).decode('utf-8')
-
-            image_data.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{encoded_image}"
-                }
-            })
-
-        prompt = """
-        Analyze the image(s) and extract any race result tables or listings.
-
-        Return the data in JSON format like this:
-        [
-          {
-            "position": 1,
-            "driver": "Name",
-            "team": "Team Name",
-            "time": "1:23.456"
-          },
-          ...
-        ]
-        If information is missing, fill only what is available.
-        """
-
-        messages = [
-            {
-                "role": "system",
-                "content": "You are an AI assistant that extracts structured data from images."
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    *image_data
-                ]
-            }
-        ]
-
-        client = get_openai_client()
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages
-        )
-
-        content = response.choices[0].message.content
-
-        import json
-        import re
-
-        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-        if json_match:
-            json_string = json_match.group(1)
-        else:
-            json_string = content
-
-        try:
-            race_results = json.loads(json_string)
-            return race_results
-        except json.JSONDecodeError as e:
-            return {
-                "error": "Failed to parse JSON",
-                "raw_content": content,
-                "json_error": str(e)
-            }
+    def extract_race_results(image_files, user_id):
+        """Return validated AI suggestions; saving results remains a separate action."""
+        from src.league_module.image_extraction import extract_images
+        return extract_images(image_files, user_id, get_openai_client)

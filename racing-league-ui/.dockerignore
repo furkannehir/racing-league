@@ -1,0 +1,14 @@
+.git
+.codex
+.agents
+.aws
+**/node_modules
+dist
+dist-ssr
+coverage
+**/.env*
+!.env.example
+**/serviceAccountKey.json
+**/*.log
+.idea
+.vscode

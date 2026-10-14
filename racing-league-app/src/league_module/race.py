@@ -24,7 +24,7 @@ class Race:
             "created_at": self.created_at,
         }
 
-    def save(self):
+    def save(self, session=None):
         """Insert a new race"""
         doc = {
             "league_id": self.league_id,
@@ -33,7 +33,7 @@ class Race:
             "status": self.status,
             "created_at": self.created_at,
         }
-        result = db.races.insert_one(doc)
+        result = db.races.insert_one(doc, session=session)
         self._id = result.inserted_id
 
     def update(self):

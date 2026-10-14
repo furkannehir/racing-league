@@ -8,6 +8,7 @@ from pathlib import Path
 from bson import ObjectId
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.config.legacy_schema import ACTIVE_LEGACY_LEAGUES, live_legacy_invites
 
 
 def parse_date(value):
@@ -40,7 +41,7 @@ def build_plan(database):
     def add(collection, query, values, preserve=True):
         plan.append((collection, query, values, preserve))
 
-    for league in database.leagues.find({"owner_id": {"$exists": False}}):
+    for league in database.leagues.find(ACTIVE_LEGACY_LEAGUES):
         league_id = league["_id"]
         owner = resolve(league.get("owner"))
         created_at = league.get("created_at") or datetime.now(timezone.utc)
@@ -148,7 +149,7 @@ def build_plan(database):
             "fastest_lap_point": fastest_lap_point, "schema_version": 2,
         }, preserve=False)
 
-    for invite in database.invites.find({"league_id": {"$exists": False}}):
+    for invite in live_legacy_invites(database):
         league_id = ObjectId(invite.get("league"))
         if not database.leagues.find_one({"_id": league_id}):
             raise ValueError("An invitation references a missing league")
@@ -168,6 +169,10 @@ def build_plan(database):
 
 def migrate(database, apply=False):
     plan = build_plan(database)
+    # Count retained archives before applying, while the source legacy records still exist.
+    archived_leagues = database.leagues.count_documents({"owner_id": {"$exists": False}, "deleted_at": {"$ne": None}})
+    archived_invites = (database.invites.count_documents({"league_id": {"$exists": False}})
+                       - sum(1 for _ in live_legacy_invites(database)))
     if apply and plan:
         from src.config.mongo import run_transaction
 
@@ -178,7 +183,8 @@ def migrate(database, apply=False):
                     upsert=preserve, session=session,
                 )
         run_transaction(write, database=database)
-    return {"operations": len(plan), "applied": bool(apply and plan)}
+    return {"operations": len(plan), "applied": bool(apply and plan),
+            "skipped_archived_leagues": archived_leagues, "skipped_archived_invites": archived_invites}
 
 
 def main():
@@ -191,6 +197,7 @@ def main():
         if args.apply:
             ensure_indexes()
         print(f"{'Applied' if args.apply else 'Dry run'}: {summary['operations']} operations")
+        print(f"Retained archives: {summary['skipped_archived_leagues']} leagues, {summary['skipped_archived_invites']} invitations")
     except Exception as exc:
         print(f"Migration failed: {exc}", file=sys.stderr)
         return 1

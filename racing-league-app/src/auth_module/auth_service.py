@@ -1,42 +1,133 @@
 # project/src/auth_module/auth_service.py
-from firebase_admin import auth
-from flask import session, request, jsonify
+from dataclasses import dataclass
+from firebase_admin import auth, exceptions as firebase_errors
+from flask import g, request, jsonify, make_response
 import requests
+from pymongo.errors import PyMongoError
 from src.config.config import Config
 from functools import wraps
+
+
+class AuthError(Exception):
+    def __init__(self, message, code, status=401):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+@dataclass(frozen=True)
+class AuthTokens:
+    uid: str
+    token: str
+    refresh_token: str
+    expires_in: int
+
+
+def auth_error_response(error):
+    response = jsonify({"message": str(error), "code": error.code})
+    response.headers['Cache-Control'] = 'no-store'
+    return response, error.status
 
 
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({"message": "Missing or invalid token"}), 401
-
-        token = auth_header.split(' ')[1]
         try:
-            decoded_token = auth.verify_id_token(token)
-            # Store uid in request context for the route to use
-            request.uid = decoded_token['user_id']
-            return f(*args, **kwargs)
-        except Exception as e:
-            if str(e).lower().__contains__('token'):
-                return jsonify({"message": "Invalid token"}), 401
-            else:
-                return jsonify({"message": str(e)}), 500
+            parts = request.headers.get('Authorization', '').split()
+            if len(parts) != 2 or parts[0].lower() != 'bearer':
+                raise AuthError("Missing or invalid token", "missing_token")
+            g.auth_identity = AuthService.authenticate_token(parts[1])
+        except AuthError as error:
+            return auth_error_response(error)
+
+        # Route exceptions belong to Flask, not the authentication handler.
+        response = make_response(f(*args, **kwargs))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     return decorated_function
 
 class AuthService:
-    
     @staticmethod
-    def verify_id_token(id_token):
-        """Verify Firebase ID token"""
+    def authenticate_token(token):
+        """Verify credentials and account state before resolving application identity."""
+        from src.user_module.user import User
+
         try:
-            decoded_token = auth.verify_id_token(id_token)
-            return decoded_token['user_id']
-        except Exception as e:
-            return None
+            claims = auth.verify_id_token(token, check_revoked=True)
+            uid = claims.get('uid') or claims.get('user_id') or claims.get('sub')
+            if not isinstance(uid, str) or not uid:
+                raise AuthError("Invalid token", "invalid_token")
+            firebase_user = auth.get_user(uid)
+            if firebase_user.disabled:
+                raise AuthError("Your account is disabled", "account_disabled")
+            if claims.get('email_verified') is not True or firebase_user.email_verified is not True:
+                raise AuthError("Email not verified. Please verify your email.", "email_not_verified")
+            user = User.get_user_by_auth_email(firebase_user.email)
+            if user is None or (user.firebase_uid is not None and user.firebase_uid != uid):
+                raise AuthError("Your application account is unavailable", "account_unavailable")
+            return {"uid": uid, "user": user, "firebase_user": firebase_user}
+        except auth.ExpiredIdTokenError as exc:
+            raise AuthError("Your token has expired", "token_expired") from exc
+        except auth.RevokedIdTokenError as exc:
+            raise AuthError("Your session has been revoked. Please sign in again.", "token_revoked") from exc
+        except auth.UserDisabledError as exc:
+            raise AuthError("Your account is disabled", "account_disabled") from exc
+        except (auth.InvalidIdTokenError, auth.UserNotFoundError, ValueError) as exc:
+            raise AuthError("Invalid token", "invalid_token") from exc
+        except (auth.CertificateFetchError, firebase_errors.FirebaseError, PyMongoError,
+                requests.RequestException) as exc:
+            raise AuthError("Authentication is temporarily unavailable. Please try again.",
+                            "auth_unavailable", 503) from exc
+
+    @staticmethod
+    def user_payload(identity):
+        user = identity['user']
+        return {"id": identity['uid'], "mongoId": str(user._id),
+                "email": user.email, "name": user.name if isinstance(user.name, str) else ""}
+
+    @staticmethod
+    def token_payload(tokens):
+        identity = AuthService.authenticate_token(tokens.token)
+        if identity['uid'] != tokens.uid:
+            raise AuthError("Authentication is temporarily unavailable. Please try again.",
+                            "auth_unavailable", 503)
+        return {"token": tokens.token, "refreshToken": tokens.refresh_token,
+                "expiresIn": tokens.expires_in, "user": AuthService.user_payload(identity)}
+
+    @staticmethod
+    def _exchange_tokens(url, payload, refresh=False):
+        try:
+            response = requests.post(url, **({'data': payload} if refresh else {'json': payload}),
+                                     timeout=(5, 10))
+            if response.status_code >= 500 or response.status_code == 429:
+                raise AuthError("Authentication is temporarily unavailable. Please try again.",
+                                "auth_unavailable", 503)
+            if response.status_code != 200:
+                error_code = response.json().get('error', {}).get('message', '').split(' : ')[0]
+                invalid_codes = ({'TOKEN_EXPIRED', 'USER_DISABLED', 'USER_NOT_FOUND', 'INVALID_REFRESH_TOKEN'}
+                                 if refresh else {'INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD',
+                                                  'EMAIL_NOT_FOUND', 'USER_DISABLED', 'INVALID_EMAIL'})
+                if error_code not in invalid_codes:
+                    raise AuthError("Authentication is temporarily unavailable. Please try again.",
+                                    "auth_unavailable", 503)
+                raise AuthError("Your session has expired. Please sign in again." if refresh
+                                else "Login failed. Invalid credentials.",
+                                "invalid_refresh_token" if refresh else "invalid_credentials")
+            data = response.json()
+            tokens = AuthTokens(
+                uid=data.get('user_id' if refresh else 'localId'),
+                token=data.get('id_token' if refresh else 'idToken'),
+                refresh_token=data.get('refresh_token' if refresh else 'refreshToken'),
+                expires_in=int(data.get('expires_in' if refresh else 'expiresIn', 0)),
+            )
+            if (not all(isinstance(value, str) and value for value in
+                        (tokens.uid, tokens.token, tokens.refresh_token)) or tokens.expires_in <= 0):
+                raise ValueError("Incomplete token response")
+            return tokens
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            raise AuthError("Authentication is temporarily unavailable. Please try again.",
+                            "auth_unavailable", 503) from exc
 
     @staticmethod
     def login_user(email, password):
@@ -51,14 +142,14 @@ class AuthService:
             "returnSecureToken": True
         }
 
-        response = requests.post(url, json=payload)
+        return AuthService._exchange_tokens(url, payload)
 
-        if response.status_code == 200:
-            id_token = response.json().get("idToken")
-            user_id = response.json().get("localId")
-            return id_token, user_id  # Return the ID token and user ID
-        else:
-            return None, None
+    @staticmethod
+    def refresh_tokens(refresh_token):
+        url = f"https://securetoken.googleapis.com/v1/token?key={Config.FIREBASE_API_KEY}"
+        return AuthService._exchange_tokens(url, {
+            "grant_type": "refresh_token", "refresh_token": refresh_token,
+        }, refresh=True)
 
     @staticmethod
     def check_email_verified(user_email):
@@ -70,63 +161,28 @@ class AuthService:
     @staticmethod
     def generate_verification_link(email):
         """Generate email verification link"""
-        try:
-            link = auth.generate_email_verification_link(email)
-            return link
-        except Exception as e:
-            return str(e)
+        return auth.generate_email_verification_link(email)
 
     @staticmethod
     def generate_reset_password_link(email):
         """Generate password reset link"""
-        try:
-            link = auth.generate_password_reset_link(email)
-            return link
-        except Exception as e:
-            return str(e)
-
-    @staticmethod
-    def create_session(user_id):
-        """Create a user session"""
-        session['user'] = user_id
-        
-    @staticmethod
-    def logout_user():
-        session.pop('user', None)
+        return auth.generate_password_reset_link(email)
 
     @staticmethod
     def get_current_user():
-        """Get current Firebase UID from the token in Authorization header"""
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return None
-
-        token = auth_header.split(' ')[1]
-        try:
-            decoded_token = auth.verify_id_token(token)
-            return decoded_token['user_id']
-        except:
-            return None
+        identity = getattr(g, 'auth_identity', None)
+        return identity['uid'] if identity else None
 
     @staticmethod
     def get_current_mongo_user():
-        """
-        Resolve current Firebase user to MongoDB user via email.
-        Returns the MongoDB user, or None if it cannot be resolved.
-        """
-        from src.user_module.user import User
+        """Use the application identity already verified for this request."""
+        identity = getattr(g, 'auth_identity', None)
+        return identity['user'] if identity else None
 
-        firebase_uid = AuthService.get_current_user()
-        if not firebase_uid:
-            return None
-
-        try:
-            fb_user = auth.get_user(firebase_uid)
-        except Exception:
-            return None
-
-        mongo_user = User.get_user_by_mail(fb_user.email)
-        return mongo_user
+    @staticmethod
+    def get_current_firebase_user():
+        identity = getattr(g, 'auth_identity', None)
+        return identity['firebase_user'] if identity else None
 
     @staticmethod
     def resolve_firebase_uid(firebase_uid):
@@ -143,16 +199,9 @@ class AuthService:
             return None
 
     @staticmethod
-    def register_user(email, password):
-        try:
-            user = auth.create_user(
-                email=email,
-                password=password
-            )
-            auth.generate_email_verification_link(user.email)
-            return user
-        except Exception as e:
-            return str(e)
+    def register_user(email, password, name=None):
+        # Link generation and email delivery happen after application persistence.
+        return auth.create_user(email=email, password=password, display_name=name)
         
     @staticmethod
     def get_user_by_id(user_id):
@@ -180,9 +229,11 @@ class AuthService:
         
     @staticmethod
     def update_user_password(user_id, password):
+        auth.update_user(user_id, password=password)
         try:
-            auth.update_user(user_id, password=password)
-            return True
-        except Exception as e:
-            return str(e)
+            auth.revoke_refresh_tokens(user_id)
+        except firebase_errors.FirebaseError as exc:
+            raise AuthError("Your password was changed, but ending other sessions failed. "
+                            "Sign in with the new password and try signing out all devices.",
+                            "password_changed_revocation_failed", 503) from exc
 

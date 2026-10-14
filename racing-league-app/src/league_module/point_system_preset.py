@@ -54,13 +54,13 @@ class PointSystemPreset:
         """Seed default point system presets if they don't exist"""
         presets = [
             PointSystemPreset(
-                name="F1 Current (2010–Present)",
-                description="Current Formula 1 point system used since 2010",
+                name="F1 Current (2025\u2013Present)",
+                description="Full-distance Formula 1 Grand Prix points from 2025, without a fastest-lap bonus",
                 points={
                     "1": 25, "2": 18, "3": 15, "4": 12, "5": 10,
                     "6": 8, "7": 6, "8": 4, "9": 2, "10": 1
                 },
-                fastest_lap_point=1,
+                fastest_lap_point=0,
             ),
             PointSystemPreset(
                 name="F1 Classic (2003–2009)",
@@ -94,6 +94,14 @@ class PointSystemPreset:
                 fastest_lap_point=0,
             ),
         ]
+
+        # Retire only the unchanged obsolete default. Existing league settings and
+        # customized presets keep their values; old preset records remain stored.
+        db.point_system_presets.update_many({
+            "name": {"$regex": r"^F1 Current \(2010.*Present\)$"},
+            "description": "Current Formula 1 point system used since 2010",
+            "points": presets[0].points, "fastest_lap_point": 1,
+        }, {"$set": {"active": False}})
 
         for preset in presets:
             # Several Gunicorn workers may seed simultaneously.

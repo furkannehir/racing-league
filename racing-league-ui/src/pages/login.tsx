@@ -51,8 +51,16 @@ const Login: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(() => {
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    if (reason === 'password-changed') return 'Your password was updated. Please sign in again.';
+    if (reason === 'password-changed-revocation-failed') {
+      return 'Your password was updated, but ending other sessions failed. Sign in with the new password.';
+    }
+    return null;
+  });
   const [showResendVerification, setShowResendVerification] = useState(false);
+  const [messageSeverity, setMessageSeverity] = useState<'success' | 'error'>('success');
   const [resendingVerification, setResendingVerification] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState('');
 
@@ -79,6 +87,7 @@ const Login: React.FC = () => {
     setMode(newMode);
     setShowResendVerification(false);
     setMessage(null);
+    setMessageSeverity('success');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -88,6 +97,7 @@ const Login: React.FC = () => {
     
     setShowResendVerification(false);
     setMessage(null);
+    setMessageSeverity('success');
     
     try {
       if (mode === 'login') {
@@ -95,14 +105,14 @@ const Login: React.FC = () => {
         // Use window.location for a hard navigation to ensure state is updated
         window.location.href = '/dashboard';
       } else {
-        await signup(name, email, password);
-        setMessage('Registration successful! Please check your email to verify your account.');
+        const result = await signup(name, email, password);
+        setMessage(result.message);
         setShowResendVerification(true);
         setVerificationEmail(email);
       }
-    } catch (err: any) {
+    } catch (err) {
       // Check if error is related to email verification
-      const errorMessage = err.message || '';
+      const errorMessage = err instanceof Error ? err.message : '';
       if (errorMessage.toLowerCase().includes('verify') || 
           errorMessage.toLowerCase().includes('verification') ||
           errorMessage.toLowerCase().includes('not verified')) {
@@ -115,13 +125,14 @@ const Login: React.FC = () => {
   const handleResendVerification = async () => {
     setResendingVerification(true);
     try {
-      await verification_email(verificationEmail);
-      setMessage('Verification email sent! Please check your inbox.');
+      const result = await verification_email(verificationEmail);
+      setMessage(result.message);
+      setMessageSeverity('success');
     } catch (err) {
-      setMessage('Verification email sent! Please check your inbox.');
+      setMessage(err instanceof Error ? err.message : 'Could not request a verification email. Please try again.');
+      setMessageSeverity('error');
     } finally {
       setResendingVerification(false);
-      setShowResendVerification(false);
     }
   };
 
@@ -129,7 +140,7 @@ const Login: React.FC = () => {
     try {
       await googleLogin();
       window.location.href = '/dashboard';
-    } catch (err) {
+    } catch {
       // Error is handled by useAuth
     }
   };
@@ -236,7 +247,7 @@ const Login: React.FC = () => {
                   </Alert>
                 )}
                 {message && (
-                  <Alert severity="success" sx={{ width: '100%', mb: 2 }}>
+                  <Alert severity={messageSeverity} sx={{ width: '100%', mb: 2 }}>
                     {message}
                   </Alert>
                 )}
@@ -312,6 +323,8 @@ const Login: React.FC = () => {
                     required
                     fullWidth
                     name="password"
+                    inputProps={mode === 'signup' ? { minLength: 6, maxLength: 128 } : undefined}
+                    helperText={mode === 'signup' ? 'Use a long, unique password (6–128 characters).' : undefined}
                     label="Password"
                     type={showPassword ? "text" : "password"}
                     id="password"

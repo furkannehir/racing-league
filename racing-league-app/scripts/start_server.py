@@ -15,14 +15,22 @@ def prepare_database():
     assert_schema_ready()
     ensure_indexes()
     print(f"Database ready: {summary['operations']} migration operations.", flush=True)
+    print(f"Retained archives: {summary['skipped_archived_leagues']} leagues, {summary['skipped_archived_invites']} invitations.", flush=True)
 
 
 def main(argv=None):
     command = list(sys.argv[1:] if argv is None else argv)
-    if not command:
+    if not command or command == ["gunicorn"]:
+        try:
+            port = int(os.getenv('PORT', '5000'))
+            if not 1 <= port <= 65535:
+                raise ValueError()
+        except ValueError:
+            print("PORT must be an integer between 1 and 65535", file=sys.stderr, flush=True)
+            return 1
         command = [
-            "gunicorn", "--workers", "4", "--bind",
-            f"0.0.0.0:{os.getenv('PORT', '5000')}", "app:app",
+            "gunicorn", "--workers", "4", "--timeout", "90", "--bind",
+            f"0.0.0.0:{port}", "app:app",
         ]
     try:
         prepare_database()

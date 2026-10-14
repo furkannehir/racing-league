@@ -4,62 +4,64 @@ from src.league_module.league import League
 from src.league_module.league_member import LeagueMember
 from src.auth_module.auth_service import AuthService
 from src.user_module.user import User
-from src.email_module.email_service import EmailService
+from src.config import mongo
+from email_validator import validate_email, EmailNotValidError
+from datetime import datetime, timezone
 
 
 class InviteService:
 
     @staticmethod
+    def normalize_emails(email_list):
+        if not isinstance(email_list, list) or len(email_list) > 100:
+            raise ValueError("Invitations must be a list of at most 100 email addresses")
+        normalized = []
+        for email in email_list:
+            if not isinstance(email, str):
+                raise ValueError("Each invitation needs a valid email address")
+            try:
+                # Syntax only: league creation must not make DNS or email requests.
+                value = validate_email(email.strip(), check_deliverability=False).normalized.casefold()
+            except EmailNotValidError as exc:
+                raise ValueError("Each invitation needs a valid email address") from exc
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
+
+    @staticmethod
     def create_invite(email, league_id):
-        """Create a single invite"""
+        return InviteService.create_invites([email], league_id)[0]
+
+    @staticmethod
+    def create_invites(email_list, league_id):
+        """Save the entire batch and its delivery work atomically."""
+        emails = InviteService.normalize_emails(email_list)
+        if not emails:
+            raise ValueError("At least one invitation email is required")
         inviter = AuthService.get_current_mongo_user()
         if not inviter:
             raise Exception("User not found")
 
-        league = League.get_by_id(league_id)
-        if not league:
-            raise Exception("League not found")
-        if not LeagueMember.is_admin_or_owner(league_id, str(inviter._id)):
-            raise ValueError("Only league owners or admins can send invites")
+        def persist(session):
+            LeagueMember.lock_league(league_id, session)
+            membership = LeagueMember.get_member(league_id, str(inviter._id), session=session)
+            if not membership or membership.role not in ("owner", "admin"):
+                raise ValueError("Only league owners or admins can send invites")
+            # Validate the entire batch before saving its first row.
+            for email in emails:
+                if Invite.exists(email, league_id, session=session):
+                    raise ValueError("Invite already sent to this user")
+                invitee = User.get_user_by_auth_email(email)
+                if invitee and LeagueMember.get_member(league_id, str(invitee._id), session=session):
+                    raise ValueError("User is already a member of this league")
+            invites = []
+            for email in emails:
+                invite = Invite(ObjectId(league_id), str(inviter._id), email)
+                invite.save(session=session)
+                invites.append(invite)
+            return invites
 
-        # Check if invite already exists
-        if Invite.exists(email, league_id):
-            raise Exception("Invite already sent to this user")
-
-        # Check if user is already a member
-        invitee = User.get_user_by_mail(email)
-        if invitee and LeagueMember.is_member(league_id, str(invitee._id)):
-            raise Exception("User is already a member of this league")
-
-        invite = Invite(
-            league_id=ObjectId(league_id),
-            inviter_id=str(inviter._id),  # Store MongoDB _id
-            invited_email=email,
-            status="pending",
-        )
-        invite.save()
-
-        # Send email notification
-        invitee_name = invitee.name if invitee else email
-        EmailService.send_custom_email(
-            to_email=email,
-            name=invitee_name,
-            subject="You're invited to join a league!",
-            message_top="You have been invited to join a league. Log in to your account to accept or decline the invitation. If you're not registered yet, you can sign up to join the league.",
-            message_bottom="If you have any questions, feel free to reach out to us.",
-            button_name="View Invitation",
-            url="https://yourapp.com/invites",
-        )
-
-        return invite
-
-    @staticmethod
-    def create_invites(email_list, league_id):
-        """Create invites for multiple emails"""
-        invites = []
-        for email in email_list:
-            invites.append(InviteService.create_invite(email, league_id))
-        return invites
+        return mongo.run_transaction(persist)
 
     @staticmethod
     def get_invites_by_user(email):
@@ -79,38 +81,24 @@ class InviteService:
             raise Exception("User not found")
         mongo_id = str(user._id)
 
-        invite = Invite.get_by_id(invite_id)
-        if not invite:
-            raise Exception("Invite not found")
+        if league_user_name is not None and (not isinstance(league_user_name, str) or not league_user_name.strip()):
+            raise ValueError("Driver name must be a non-empty string")
 
-        if user.email != invite.invited_email:
-            raise Exception("You are not allowed to accept this invite")
+        def accept(session):
+            invite = Invite.get_by_id(invite_id, session=session)
+            if not invite:
+                raise ValueError("Invite not found")
+            if user.email.casefold() != invite.invited_email.casefold():
+                raise ValueError("You are not allowed to accept this invite")
+            if invite.status != "pending":
+                raise ValueError("Invite is not pending")
+            LeagueMember.join_as_participant(str(invite.league_id), mongo_id,
+                league_user_name.strip() if league_user_name else user.name, session)
+            invite.status = "accepted"
+            invite.update(session=session)
+            return invite
 
-        if invite.status != "pending":
-            raise Exception("Invite is not pending")
-
-        league = League.get_by_id(str(invite.league_id))
-        if not league:
-            raise ValueError("League not found")
-        if LeagueMember.is_member(str(league._id), mongo_id):
-            raise ValueError("Already a member of this league")
-        if LeagueMember.get_member_count(str(league._id)) >= league.max_players:
-            raise ValueError("League is full")
-
-        # Add user as league member
-        member = LeagueMember(
-            league_id=invite.league_id,
-            user_id=mongo_id,  # MongoDB _id
-            role="member",
-            display_name=league_user_name or user.name,
-        )
-        member.save()
-
-        # Update invite status
-        invite.status = "accepted"
-        invite.update()
-
-        return invite
+        return mongo.run_transaction(accept)
 
     @staticmethod
     def decline_invite(invite_id):
@@ -123,14 +111,13 @@ class InviteService:
         if not invite:
             raise Exception("Invite not found")
 
-        if user.email != invite.invited_email:
+        if user.email.casefold() != invite.invited_email.casefold():
             raise Exception("You are not allowed to decline this invite")
 
         if invite.status != "pending":
             raise Exception("Invite is not pending")
 
-        invite.status = "declined"
-        invite.update()
+        InviteService.finish_pending_invite(invite, "declined")
         return invite
 
     @staticmethod
@@ -148,6 +135,38 @@ class InviteService:
         if invite.inviter_id != mongo_id:
             raise Exception("You are not allowed to delete this invite")
 
-        invite.status = "deleted"
-        invite.update()
+        InviteService.finish_pending_invite(invite, "deleted")
         return invite
+
+    @staticmethod
+    def finish_pending_invite(invite, status):
+        # Acceptance may have committed since the initial permission check.
+        now = datetime.now(timezone.utc)
+        result = mongo.db.invites.update_one(
+            {'_id': invite._id, 'status': 'pending'},
+            {'$set': {'status': status, 'updated_at': now}})
+        if result.matched_count != 1:
+            raise ValueError("Invite is no longer pending")
+        invite.status = status
+        invite.updated_at = now
+
+    @staticmethod
+    def retry_notification(invite_id):
+        user = AuthService.get_current_mongo_user()
+        if not ObjectId.is_valid(invite_id):
+            raise ValueError("Invite not found")
+        invite = Invite.get_by_id(invite_id)
+        if not invite or not League.get_by_id(str(invite.league_id)):
+            raise ValueError("Invite not found")
+        if not user or not LeagueMember.is_admin_or_owner(str(invite.league_id), str(user._id)):
+            raise PermissionError("Only league owners or admins can retry invitation emails")
+        if invite.status != 'pending':
+            raise ValueError("Only pending invitations can be retried")
+        now = datetime.now(timezone.utc)
+        result = mongo.db.invites.update_one({'_id': invite._id, 'status': 'pending', '$or': [
+            {'email_status': {'$ne': 'sending'}}, {'email_lock_until': {'$lte': now}},
+        ]}, {'$set': {'email_status': 'pending', 'email_attempts': 0, 'email_retry_at': now},
+             '$unset': {'email_claim_token': '', 'email_lock_until': ''}})
+        if result.matched_count != 1:
+            raise ValueError("The invitation email is already being sent")
+        return Invite.get_by_id(invite_id)

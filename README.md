@@ -26,9 +26,21 @@ https://www.pushtopass.app/
 - Python 3.12 (for local development)
 
 ### Using Docker
+
+Provide `racing-league-app/.env` and `racing-league-app/serviceAccountKey.json` locally.
+Compose injects them at runtime; they are excluded from Docker images. Configure
+the backend's `ORIGINS` to include `http://localhost:3000` and use a MongoDB replica
+set as described in the [backend README](racing-league-app/README.md).
+
 ```bash
-docker-compose up -d
+docker compose up --build -d
 ```
+
+The local frontend build explicitly targets `http://localhost:5000/api`.
+Production frontend builds require `VITE_API_URL` to be set to the intended
+backend URL, including `/api`. See the [frontend configuration instructions](racing-league-ui/README.md#build-and-deployment-configuration).
+Set the backend's `FRONTEND_URL` to your frontend's public origin for invitation
+links. Compose defaults it to `http://localhost:3000`.
 ### Local Development
 #### Backend
 ```bash

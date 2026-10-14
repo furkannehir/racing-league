@@ -10,11 +10,9 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build
-
-# Debug - list directories to see where build output is located
-RUN ls -la
+# The API URL is public frontend configuration, supplied at build time.
+ARG VITE_API_URL
+RUN VITE_API_URL="$VITE_API_URL" npm run build
 
 # Production stage
 FROM nginx:alpine

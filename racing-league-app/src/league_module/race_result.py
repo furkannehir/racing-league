@@ -2,6 +2,7 @@ from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from src.config.mongo import db
 from src.config.mongo import run_transaction
+from src.league_module.league_member import LeagueMember
 
 
 class RaceResult:
@@ -92,9 +93,21 @@ class RaceResult:
                 "fastest_laps": {"$sum": {"$cond": ["$fastest_lap", 1, 0]}},
                 "races": {"$sum": 1},
             }},
-            {"$sort": {"points": -1, "wins": -1, "podiums": -1}},
+            {"$sort": {"points": -1, "wins": -1, "podiums": -1, "_id": 1}},
         ]
         results = list(db.race_results.aggregate(pipeline))
+        by_user = {str(row['_id']): row for row in results}
+        for member in LeagueMember.get_members(league_id):
+            if not member.is_participating:
+                by_user.pop(member.user_id, None)
+                continue
+            by_user.setdefault(member.user_id, {
+                '_id': member.user_id, 'points': 0, 'wins': 0, 'podiums': 0,
+                'dnfs': 0, 'fastest_laps': 0, 'races': 0,
+            })
+        # Include zero-result participants and retain departed drivers' recorded history.
+        results = sorted(by_user.values(), key=lambda row: (
+            -row['points'], -row['wins'], -row['podiums'], str(row['_id'])))
         standings = []
         for i, r in enumerate(results):
             standings.append({
@@ -113,6 +126,18 @@ class RaceResult:
     def replace_by_race(race_id, results, result_type="race"):
         """Replace validated results and race status in a single transaction."""
         def replace(session):
+            race = db.races.find_one({'_id': ObjectId(race_id)}, session=session)
+            if not race:
+                raise ValueError("Race not found")
+            league = LeagueMember.lock_league(str(race['league_id']), session)
+            for result in results:
+                member = LeagueMember.get_member(str(league._id), result.user_id, session=session)
+                if not member or not member.is_participating:
+                    raise ValueError("Results require participating drivers")
+                # Use the settings committed before this transaction acquired the league.
+                result.points = 0 if result.dnf else league.point_system.get(str(result.position), 0)
+                if not result.dnf and result.fastest_lap:
+                    result.points += league.fastest_lap_point
             db.race_results.delete_many({
                 "race_id": ObjectId(race_id), "result_type": result_type
             }, session=session)

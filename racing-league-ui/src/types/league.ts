@@ -16,6 +16,7 @@ export interface RaceDetails {
   }
   
   export interface DriverStandings {
+    position?: number;
     points: number;
     wins: number;
     podiums: number;
@@ -30,6 +31,24 @@ export interface RaceDetails {
     name?: string;  // User's actual name from User collection
     id?: string;    // User's ID from User collection
   }
+
+  export interface LeagueSummary {
+    _id: string;
+    name: string;
+    public: boolean;
+    status: string;
+    max_players: number;
+    participantsCount: number;
+    next_race: { track: string; date: string } | null;
+  }
+
+  export interface LeagueDiscoveryPage {
+    leagues: LeagueSummary[];
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+  }
   
   export interface League {
     _id: string;
@@ -41,8 +60,11 @@ export interface RaceDetails {
     max_players: number;
     name: string;
     owner: string;
+    creatorParticipates?: boolean;
+    isParticipating?: boolean;
     participants: LeagueParticipant[];
-    pointSystem: {};
+    teams?: TeamsWithStats;
+    pointSystem: Record<string, number>;
     public: boolean;
     standings: {
       overall: Record<string, DriverStandings>;
@@ -58,12 +80,7 @@ export interface RaceDetails {
 
 export interface LeagueInvite {
     _id: string;
-    league: {
-        _id: string;
-        name: string;
-        participantsCount: number;
-        status: string;
-    };
+    league: LeagueSummary;
     inviter?: {
       _id: string;
       name: string;
@@ -83,7 +100,17 @@ export interface TeamMemberDetails {
   fastestLaps: number;
 }
 
+export interface SentLeagueInvite {
+  _id: string;
+  league_id: string;
+  invited_email: string;
+  status: string;
+  email_status: 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'unknown';
+  email_attempts: number;
+}
+
 export interface TeamStats {
+  position?: number;
   members: string[];
   total_points: number;
   total_wins: number;

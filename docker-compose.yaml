@@ -1,10 +1,11 @@
-version: '3.8'
-
 services:
   frontend:
     build:
       context: ./racing-league-ui
       dockerfile: Dockerfile
+      args:
+        # Browser requests use the published backend port, not Docker's hostname.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:5000/api}
     ports:
       - "3000:80"
     depends_on:
@@ -16,8 +17,20 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5000:5000"
+    env_file:
+      - ./racing-league-app/.env
     environment:
       - FLASK_ENV=production
+      - ENV=production
+      - PORT=5000
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+    volumes:
+      - type: bind
+        source: ./racing-league-app/serviceAccountKey.json
+        target: /etc/secrets/serviceAccountKey.json
+        read_only: true
+        bind:
+          create_host_path: false
 
 networks:
   default:

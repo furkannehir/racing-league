@@ -1,29 +1,61 @@
 from flask import Blueprint, request, jsonify
+from functools import wraps
+from bson import ObjectId
+from pymongo.errors import PyMongoError
 from src.auth_module.auth_service import login_required, AuthService
 from src.league_module.league import League
 from src.league_module.league_member import LeagueMember
 from src.league_module.league_service import LeagueService
-import io
-from PIL import Image
+from werkzeug.exceptions import RequestEntityTooLarge
+from src.league_module.race import Race
+from src.league_module.image_extraction import ExtractionError, MAX_REQUEST_BYTES
 
 league_blueprint = Blueprint('league', __name__, url_prefix='/api/v1/leagues')
 
 
+def league_member_required(view):
+    """Keep detailed reads within the league; hide inaccessible league IDs."""
+    @wraps(view)
+    def decorated(league_id, *args, **kwargs):
+        if not ObjectId.is_valid(league_id):
+            return jsonify({"message": "League not found"}), 404
+        user = AuthService.get_current_mongo_user()
+        if (not user or not League.get_by_id(league_id)
+                or not LeagueMember.is_member(league_id, str(user._id))):
+            return jsonify({"message": "League not found"}), 404
+        return view(league_id, *args, **kwargs)
+    return decorated
+
+
 @league_blueprint.route('/all', methods=['GET'])
 def get_all_leagues():
-    leagues = League.get_public_leagues()
-    return jsonify([LeagueService.get_league_detail(str(league._id)) for league in leagues]), 200
+    return public_league_page(legacy_array=True)
+
+
+def public_league_page(page=None, page_size=None, legacy_array=False):
+    try:
+        result = LeagueService.get_public_league_page(
+            int(request.args.get('page', 1)) if page is None else page,
+            int(request.args.get('page_size', 10)) if page_size is None else page_size,
+            request.args.get('q', ''))
+    except ValueError as error:
+        return jsonify({"message": str(error)}), 400
+    except PyMongoError:
+        return jsonify({"message": "League discovery is temporarily unavailable"}), 503
+    response = jsonify(result['leagues'] if legacy_array else result)
+    response.headers['X-Total-Count'] = str(result['total'])
+    return response, 200
+
+
+@league_blueprint.route('/discovery', methods=['GET'])
+def discover_leagues():
+    return public_league_page()
 
 
 @league_blueprint.route('/<int:page>/<int:page_size>', methods=['GET'])
 @login_required
 def get_all_leagues_page(page, page_size):
-    leagues = League.get_public_leagues_paginated(page, page_size)
-    return jsonify({
-        'page': page,
-        'page_size': page_size,
-        'leagues': [LeagueService.get_league_detail(str(league._id)) for league in leagues]
-    }), 200
+    return public_league_page(page=page, page_size=page_size)
 
 
 @league_blueprint.route('/my', methods=['GET'])
@@ -45,10 +77,8 @@ def create_league():
         return jsonify({"message": "Invalid league settings"}), 400
     if not data.get('name') or data.get('public') is None:
         return jsonify({"message": "Missing required fields"}), 400
-    if not data.get('calendar'):
-        data['calendar'] = []
-    if not data.get('max_players'):
-        data['max_players'] = 20
+    data.setdefault('calendar', [])
+    data.setdefault('max_players', 20)
 
     user = AuthService.get_current_mongo_user()
     if not user:
@@ -63,6 +93,7 @@ def create_league():
 
 @league_blueprint.route('/<league_id>', methods=['GET'])
 @login_required
+@league_member_required
 def get_league(league_id):
     league_detail = LeagueService.get_league_detail(league_id)
     if not league_detail:
@@ -88,8 +119,10 @@ def update_league(league_id):
     if not league:
         return jsonify({"message": "League not found"}), 404
 
+    if 'creatorParticipates' in data and mongo_id != league.owner_id:
+        return jsonify({"message": "Only the owner can change their participation"}), 403
     try:
-        league = LeagueService.update_league(league, data)
+        league = LeagueService.update_league(league, data, actor_id=mongo_id)
     except ValueError as e:
         return jsonify({"message": str(e)}), 400
     return jsonify(LeagueService.get_league_detail(league_id)), 200
@@ -112,8 +145,7 @@ def delete_league(league_id):
 
 @league_blueprint.route('/public', methods=['GET'])
 def get_public_leagues():
-    leagues = League.get_public_leagues()
-    return jsonify([LeagueService.get_league_detail(str(league._id)) for league in leagues]), 200
+    return public_league_page(legacy_array=True)
 
 
 @league_blueprint.route('/<league_id>/join', methods=['POST'])
@@ -134,16 +166,12 @@ def join_league(league_id):
     if LeagueMember.is_member(league_id, mongo_id):
         return jsonify({"message": "Already a member"}), 400
 
-    if LeagueMember.get_member_count(league_id) >= league.max_players:
-        return jsonify({"message": "League is full"}), 400
-
-    member = LeagueMember(
-        league_id=league._id,
-        user_id=mongo_id,
-        role="member",
-        display_name=user.name,
-    )
-    member.save()
+    from src.config import mongo
+    try:
+        mongo.run_transaction(lambda session: LeagueMember.join_as_participant(
+            league_id, mongo_id, user.name, session, require_public=True))
+    except ValueError as error:
+        return jsonify({"message": str(error)}), 400
     return jsonify({"message": "You have joined the league!"}), 200
 
 
@@ -153,10 +181,14 @@ def leave_league(league_id):
     user = AuthService.get_current_mongo_user()
     if not user:
         return jsonify({"message": "User not found"}), 404
-    member = LeagueMember.get_member(league_id, str(user._id))
-    if member and member.role == "owner":
-        return jsonify({"message": "The owner cannot leave their league"}), 400
-    LeagueMember.remove(league_id, str(user._id))
+    if not ObjectId.is_valid(league_id) or not League.get_by_id(league_id):
+        return jsonify({"message": "League not found"}), 404
+    try:
+        LeagueMember.remove(league_id, str(user._id))
+    except ValueError as error:
+        return jsonify({"message": str(error)}), 400
+    except PyMongoError:
+        return jsonify({"message": "Unable to leave the league. Please try again"}), 503
     return jsonify({"message": "You have left the league!"}), 200
 
 
@@ -186,6 +218,7 @@ def submit_race_results(league_id, race_id):
 
 @league_blueprint.route('/<league_id>/races/<race_id>/extract-results', methods=['POST'])
 @login_required
+@league_member_required
 def extract_race_results(league_id, race_id):
     try:
         user = AuthService.get_current_mongo_user()
@@ -196,30 +229,27 @@ def extract_race_results(league_id, race_id):
         if not LeagueMember.is_admin_or_owner(league_id, mongo_id):
             return jsonify({"message": "Not authorized to extract results"}), 403
 
-        images = request.files.getlist('images')
-        if len(images) == 0:
-            return jsonify({"message": "No images provided"}), 400
-        if len(images) > 2:
-            return jsonify({"message": "Too many images provided. Maximum 2 images allowed"}), 400
-
-        image_list = []
-        for img in images:
-            if img.mimetype not in ['image/jpeg', 'image/png']:
-                return jsonify({"message": "Invalid file type. Only JPEG and PNG are supported"}), 400
-            image = Image.open(io.BytesIO(img.read()))
-            if image.mode == "RGBA":
-                image = image.convert("RGB")
-            image_list.append(image)
-
-        results = LeagueService.extract_race_results(image_list)
+        race = Race.get_by_id(race_id) if ObjectId.is_valid(race_id) else None
+        if not race or race.league_id != ObjectId(league_id):
+            return jsonify({"message": "Race not found"}), 404
+        if request.content_length and request.content_length > MAX_REQUEST_BYTES:
+            raise RequestEntityTooLarge()
+        results = LeagueService.extract_race_results(request.files.getlist('images'), mongo_id)
         return jsonify(results), 200
-
-    except Exception as e:
-        return jsonify({"message": str(e)}), 400
+    except RequestEntityTooLarge:
+        return jsonify({"message": "Request must be 13 MiB or smaller", "code": "request_too_large"}), 413
+    except ExtractionError as error:
+        response = jsonify({"message": str(error), "code": error.code})
+        if error.retry_after:
+            response.headers['Retry-After'] = str(error.retry_after)
+        return response, error.status
+    except Exception:
+        return jsonify({"message": "Image extraction is currently unavailable"}), 503
 
 
 @league_blueprint.route('/<league_id>/standings', methods=['GET'])
 @login_required
+@league_member_required
 def get_league_standings(league_id):
     """Get standings for a league"""
     try:
@@ -231,6 +261,7 @@ def get_league_standings(league_id):
 
 @league_blueprint.route('/<league_id>/standings/<participant_email>', methods=['GET'])
 @login_required
+@league_member_required
 def get_participant_standings(league_id, participant_email):
     """Get standings for a specific participant"""
     try:
@@ -271,6 +302,7 @@ def set_teams(league_id):
 
 @league_blueprint.route('/<league_id>/teams', methods=['GET'])
 @login_required
+@league_member_required
 def get_teams(league_id):
     """Get all teams with calculated statistics"""
     try:
@@ -282,6 +314,7 @@ def get_teams(league_id):
 
 @league_blueprint.route('/<league_id>/teams/standings', methods=['GET'])
 @login_required
+@league_member_required
 def get_team_standings(league_id):
     """Get teams sorted by total points (leaderboard)"""
     try:

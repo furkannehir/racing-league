@@ -56,9 +56,9 @@ const AppHeader: React.FC = () => {
     setMobileMenuAnchor(null);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     handleMenuClose();
-    logout();
+    await logout();
     navigate('/login');
   };
 

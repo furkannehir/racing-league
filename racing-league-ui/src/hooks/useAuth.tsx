@@ -1,224 +1,135 @@
-import { useState, useEffect, createContext, useContext } from 'react';
-import api, { checkAuth } from '../services/api';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
+import { checkAuth } from '../services/api';
+import { ApiError, authenticate, register, logoutSession } from '../services/auth-client';
+import { SESSION_EVENT, SESSION_KEY, readSession, clearLegacySession } from '../services/session';
+import { AuthUser, RegistrationResponse } from '../types/auth';
 
-// User interface
-export interface User {
-  id: string;
-  username: string;
-  email: string;
-  name: string;
-  profilePicture?: string;
-}
+export type User = AuthUser;
 
-// Auth context interface
 interface AuthContextType {
   isAuthenticated: boolean;
   user: User | null;
   login: (email: string, password: string, remember?: boolean) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
+  signup: (name: string, email: string, password: string) => Promise<RegistrationResponse>;
   googleLogin: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   loading: boolean;
   error: string | null;
 }
 
-// Create auth context
 const AuthContext = createContext<AuthContextType | null>(null);
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const active = useRef(readSession());
 
-  // Login with username/password
-  const login = async (email: string, password: string, remember: boolean = false): Promise<void> => {
+  const login = async (email: string, password: string, remember = false): Promise<void> => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      
-      const response = await api.post('v1/auth/login', {
-        email,
-        password
-      });
-
-      const { token, user } = response.data;
-      
-      // Store token based on remember preference
-      if (remember) {
-        localStorage.setItem('token', token);
-      } else {
-        sessionStorage.setItem('token', token);
-      }
-      
-      localStorage.setItem('user', JSON.stringify(user));
-      setUser(user);
-      setIsAuthenticated(true);
-    } catch (err: any) {
-      console.log('Login error:', err);
-      let errorMessage = err.response?.data?.message || 
-                          err.response?.data?.error || 
-                          err.message || 
-                          'Authentication failed. Please try again.';
-      if (errorMessage.toLowerCase().includes('not verified')) {
-        errorMessage = 'Your email is not verified. Please check your email to verify your account.';
-      }
-      setError(errorMessage);
-      throw new Error(errorMessage);
+      await authenticate(email, password, remember);
+      const current = readSession();
+      setUser(current?.user || null);
+      setIsAuthenticated(!!current);
+    } catch (failure) {
+      setError(errorMessage(failure, 'Sign-in failed. Please try again.'));
+      throw failure;
     } finally {
       setLoading(false);
     }
   };
 
-  // Register new user
-  const signup = async (name: string, email: string, password: string): Promise<void> => {
+  const signup = async (name: string, email: string, password: string): Promise<RegistrationResponse> => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      
-      await api.post('/v1/auth/register', {
-        name,
-        email,
-        password
-      });
-      
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.message || 
-                          err.response?.data?.error || 
-                          err.message || 
-                          'Registration failed. Please try again.';
-      setError(errorMessage);
-      throw new Error(errorMessage);
+      return await register(name, email, password);
+    } catch (failure) {
+      setError(errorMessage(failure, 'Registration failed. Please try again.'));
+      throw failure;
     } finally {
       setLoading(false);
     }
   };
 
-  // Login with Google OAuth
   const googleLogin = async (): Promise<void> => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // Open Google OAuth window
-      const googleAuthUrl = `${import.meta.env.VITE_API_URL}/auth/google`;
-      
-      // Open a popup window for Google login
-      const width = 500;
-      const height = 600;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
-      
-      const popup = window.open(
-        googleAuthUrl,
-        'googleAuth',
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-      
-      // Poll the popup to check for completion
-      const pollTimer = setInterval(() => {
-        if (!popup || popup.closed) {
-          clearInterval(pollTimer);
-          setLoading(false);
-          
-          // Check if token was stored during redirect
-          const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-          if (token) {
-            setIsAuthenticated(true);
-          } else {
-            setError('Google login failed or was cancelled');
-          }
-        }
-      }, 500);
-      
-    } catch (err: any) {
-      setError('Failed to initialize Google login');
-      setLoading(false);
-      throw new Error('Google login initialization failed');
-    }
+    const failure = new Error('Google sign-in is not available yet.');
+    setError(failure.message);
+    throw failure;
   };
 
-  // Logout
   const logout = async (): Promise<void> => {
+    setLoading(true);
     try {
-      // Call logout API if available
-      await api.get('/v1/auth/logout').catch(() => {
-        // Ignore errors from logout endpoint
-      });
+      await logoutSession();
     } finally {
-      // Always clear local storage regardless of API response
-      localStorage.removeItem('token');
-      sessionStorage.removeItem('token');
-      localStorage.removeItem('user');
-      setUser(null);
-      setIsAuthenticated(false);
+      const current = readSession();
+      setUser(current?.user || null);
+      setIsAuthenticated(!!current);
+      setLoading(false);
     }
   };
 
-  // Check authentication status on mount
   useEffect(() => {
+    let cancelled = false;
+    clearLegacySession();
+    const synchronize = (event: Event) => {
+      if (event instanceof StorageEvent && event.key !== SESSION_KEY && event.key !== null) return;
+      const next = readSession();
+      if (event.type === 'storage' && active.current && next &&
+          active.current.user.id !== next.user.id) {
+        // Discard page data belonging to the previous shared account.
+        window.location.reload();
+        return;
+      }
+      active.current = next;
+      setUser(next?.user || null);
+      setIsAuthenticated(!!next);
+    };
+    window.addEventListener(SESSION_EVENT, synchronize);
+    window.addEventListener('storage', synchronize);
+
     const verifyUser = async () => {
-      setLoading(true);
-      
-      try {
-        const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-        const storedUser = localStorage.getItem('user');
-        
-        if (!token) {
-          setLoading(false);
-          return;
-        }
-        
-        // Set initial state from stored data
-        if (storedUser) {
-          setUser(JSON.parse(storedUser));
-          setIsAuthenticated(true);
-        }
-        
-        // Validate token with server using checkAuth
-        const isValid = await checkAuth();
-        
-        if (isValid) {
-          setIsAuthenticated(true);
-        } else {
-          // Token is invalid, clear auth state
-          localStorage.removeItem('token');
-          sessionStorage.removeItem('token');
-          localStorage.removeItem('user');
-          setUser(null);
-          setIsAuthenticated(false);
-        }
-      } catch (err) {
-        // Handle unexpected errors
-        console.error('Error verifying authentication:', err);
-        
-        // Clear auth state for safety
-        localStorage.removeItem('token');
-        sessionStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setUser(null);
-        setIsAuthenticated(false);
-      } finally {
+      const snapshot = readSession();
+      if (!snapshot) {
         setLoading(false);
+        return;
+      }
+      try {
+        const verifiedUser = await checkAuth();
+        if (!cancelled && readSession()?.id === snapshot.id) {
+          setUser(verifiedUser);
+          setIsAuthenticated(true);
+        }
+      } catch (failure) {
+        if (!cancelled && readSession()?.id === snapshot.id &&
+            (!(failure instanceof ApiError) || failure.response?.status !== 401)) {
+          // Keep previously verified credentials during a temporary outage.
+          setUser(readSession()?.user || snapshot.user);
+          setIsAuthenticated(true);
+          setError(errorMessage(failure, 'Session verification is temporarily unavailable.'));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
-    
-    verifyUser();
+    void verifyUser();
+    return () => {
+      cancelled = true;
+      window.removeEventListener(SESSION_EVENT, synchronize);
+      window.removeEventListener('storage', synchronize);
+    };
   }, []);
 
   return (
-    <AuthContext.Provider 
-      value={{ 
-        isAuthenticated, 
-        user, 
-        login, 
-        signup,
-        googleLogin,
-        logout,
-        loading,
-        error
-      }}
-    >
+    <AuthContext.Provider value={{ isAuthenticated, user, login, signup, googleLogin, logout, loading, error }}>
       {children}
     </AuthContext.Provider>
   );
@@ -226,8 +137,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };

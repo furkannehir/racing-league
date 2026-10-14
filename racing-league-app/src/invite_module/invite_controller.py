@@ -4,6 +4,9 @@ from src.invite_module.invite_service import InviteService
 from src.league_module.league import League
 from src.league_module.league_service import LeagueService
 from src.user_module.user import User
+from src.league_module.league_member import LeagueMember
+from src.config.mongo import db
+from bson import ObjectId
 
 invite_blueprint = Blueprint('invite', __name__, url_prefix='/api/v1/invites')
 
@@ -27,7 +30,7 @@ def get_my_invites():
 
         enriched.append({
             "_id": str(invite._id),
-            "league": LeagueService.get_league_detail(str(invite.league_id)),
+            "league": LeagueService.get_league_summary(league),
             "invited_user": invite.invited_email,
             "inviter": inviter.serialize() if inviter else {"_id": invite.inviter_id},
             "status": invite.status,
@@ -45,7 +48,17 @@ def get_sent_invites():
     user = AuthService.get_current_mongo_user()
     if not user:
         return jsonify([]), 200
-    invites = InviteService.get_sent_invites_by_user(str(user._id))
+    league_id = request.args.get('league_id')
+    if league_id:
+        if not ObjectId.is_valid(league_id) or not League.get_by_id(league_id):
+            return jsonify({"message": "League not found"}), 404
+        if not LeagueMember.is_admin_or_owner(league_id, str(user._id)):
+            return jsonify({"message": "Not authorized to view league invitations"}), 403
+        from src.invite_module.invite import Invite
+        invites = [Invite._from_doc(doc) for doc in db.invites.find({
+            'league_id': ObjectId(league_id), 'status': 'pending'})]
+    else:
+        invites = InviteService.get_sent_invites_by_user(str(user._id))
 
     enriched = []
     for invite in invites:
@@ -54,6 +67,8 @@ def get_sent_invites():
             "league_id": str(invite.league_id),
             "invited_email": invite.invited_email,
             "status": invite.status,
+            "email_status": invite.email_status,
+            "email_attempts": invite.email_attempts,
             "created_at": invite.created_at,
         })
 
@@ -76,6 +91,18 @@ def create_invite():
         if "already" in error_msg.lower():
             return jsonify({"message": "Conflict", "details": error_msg}), 409
         return jsonify({"message": error_msg}), 400
+
+
+@invite_blueprint.route('/<invite_id>/retry-email', methods=['POST'])
+@login_required
+def retry_invitation_email(invite_id):
+    try:
+        invite = InviteService.retry_notification(invite_id)
+        return jsonify(invite.serialize()), 200
+    except PermissionError as error:
+        return jsonify({"message": str(error)}), 403
+    except ValueError as error:
+        return jsonify({"message": str(error)}), 400
 
 
 @invite_blueprint.route('/<invite_id>/accept', methods=['POST'])
